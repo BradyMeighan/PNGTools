@@ -1,5 +1,5 @@
 {
-  "name": "package.json",
+  "name": "png-tools",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,13 +10,31 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.11.0",
+    "@types/file-saver": "^2.0.7",
+    "@upscalerjs/default-model": "^1.0.0-beta.17",
+    "@upscalerjs/esrgan-medium": "^1.0.0-beta.13",
+    "@upscalerjs/esrgan-slim": "^1.0.0-beta.12",
+    "@upscalerjs/esrgan-thick": "^1.0.0-beta.16",
+    "@upscalerjs/maxim-deblurring": "^0.1.0",
+    "@upscalerjs/maxim-dehazing-indoor": "^0.1.0",
+    "@upscalerjs/maxim-denoising": "^0.1.0",
+    "@upscalerjs/maxim-deraining": "^0.1.0",
+    "@upscalerjs/maxim-enhancement": "^0.1.0",
+    "@upscalerjs/maxim-retouching": "^0.1.0",
+    "browser-image-compression": "^2.0.2",
     "clsx": "^2.1.1",
+    "file-saver": "^2.0.5",
     "framer-motion": "^12.23.24",
+    "heic2any": "^0.0.4",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.554.0",
+    "onnxruntime-web": "^1.23.2",
     "react": "^19.2.0",
     "react-colorful": "^5.6.1",
     "react-dom": "^19.2.0",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "upscaler": "^1.0.0-beta.19"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
