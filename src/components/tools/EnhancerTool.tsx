@@ -1,235 +1,205 @@
-import { useState, useCallback } from 'react';
-import { Wand2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Wand2, Download, RotateCcw, ImageUp } from 'lucide-react';
 import { ImageUploader } from '../ImageUploader';
-import { ImagePreview } from '../ImagePreview';
-import { upscaleImage } from '../../lib/upscaler/utils/upscaler';
-import { MODEL_CATEGORIES } from '../../lib/upscaler/constants';
-import type { SelectedModel } from '../../lib/upscaler/types';
+import { resampleImage, loadImageFromFile, type OutputFormat } from '../../lib/enhance/resample';
 
-interface ImageState {
-    original: string | null;
-    upscaled: string | null;
-    processing: boolean;
-    error: string | null;
-}
+const SCALES = [2, 3, 4];
 
 export function EnhancerTool() {
-    const [selectedModel, setSelectedModel] = useState<SelectedModel>({
-        type: MODEL_CATEGORIES[0].models[0].name,
-        scale: MODEL_CATEGORIES[0].models[0].scales[0]
-    });
-    const [imageState, setImageState] = useState<ImageState>({
-        original: null,
-        upscaled: null,
-        processing: false,
-        error: null,
-    });
-    const [processableImage, setProcessableImage] = useState<string | null>(null);
+  const [original, setOriginal] = useState<HTMLImageElement | null>(null);
+  const [originalUrl, setOriginalUrl] = useState<string>('');
+  const [resultUrl, setResultUrl] = useState<string>('');
+  const [scale, setScale] = useState(2);
+  const [sharpen, setSharpen] = useState(0.6);
+  const [format, setFormat] = useState<OutputFormat>('image/png');
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const resultUrlRef = useRef('');
 
-    const handleImageSelect = useCallback(async (file: File) => {
-        if (!file) return;
+  useEffect(() => {
+    resultUrlRef.current = resultUrl;
+  }, [resultUrl]);
+  useEffect(() => {
+    return () => {
+      if (originalUrl) URL.revokeObjectURL(originalUrl);
+      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
+    };
+  }, [originalUrl]);
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const imageUrl = e.target?.result as string;
-            setImageState((prev) => ({
-                ...prev,
-                original: imageUrl,
-                upscaled: null,
-                error: null,
-            }));
-            setProcessableImage(imageUrl);
-        };
-        reader.onerror = () => {
-            setImageState((prev) => ({
-                ...prev,
-                error: 'Failed to load image. Please try again.',
-            }));
-        };
-        reader.readAsDataURL(file);
-    }, []);
-
-    const handleResize = useCallback((resizedImageUrl: string) => {
-        setProcessableImage(resizedImageUrl);
-    }, []);
-
-    const handleUpscale = useCallback(async () => {
-        if (!processableImage) return;
-
-        setImageState((prev) => ({ ...prev, processing: true, error: null }));
-
-        try {
-            const upscaledUrl = await upscaleImage(processableImage, selectedModel);
-
-            setImageState((prev) => ({
-                ...prev,
-                upscaled: upscaledUrl,
-                processing: false,
-            }));
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-            console.error('Upscale error:', errorMessage);
-            setImageState((prev) => ({
-                ...prev,
-                processing: false,
-                error: errorMessage,
-            }));
-        }
-    }, [processableImage, selectedModel]);
-
-    if (!imageState.original) {
-        return (
-            <div className="max-w-2xl mx-auto mt-10">
-                <div className="text-center mb-10 space-y-4">
-                    <div className="flex items-center justify-center gap-3 mb-4">
-                        <Wand2 className="w-10 h-10 text-primary" />
-                        <h2 className="text-4xl font-bold tracking-tight">AI Image Enhancer</h2>
-                    </div>
-                    <p className="text-muted-foreground text-lg">
-                        Upscale and enhance your images with AI-powered models
-                    </p>
-                </div>
-                <ImageUploader onImageSelect={handleImageSelect} />
-            </div>
-        );
+  const handleSelect = useCallback(async (file: File) => {
+    setError(null);
+    try {
+      const img = await loadImageFromFile(file);
+      setOriginal(img);
+      setOriginalUrl(img.src);
+    } catch {
+      setError('Could not load that image.');
     }
+  }, []);
 
+  const targetW = original ? original.naturalWidth * scale : 0;
+  const targetH = original ? original.naturalHeight * scale : 0;
+  const tooBig = targetW > 16384 || targetH > 16384;
+
+  const enhance = useCallback(async () => {
+    if (!original || tooBig) return;
+    setProcessing(true);
+    setError(null);
+    try {
+      const blob = await resampleImage(original, {
+        targetWidth: targetW,
+        targetHeight: targetH,
+        sharpen,
+        format,
+      });
+      if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
+      setResultUrl(URL.createObjectURL(blob));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Enhancement failed.');
+    } finally {
+      setProcessing(false);
+    }
+  }, [original, targetW, targetH, sharpen, format, tooBig]);
+
+  if (!original) {
     return (
-        <div className="max-w-7xl mx-auto space-y-8 py-8 px-4">
-            <div className="text-center">
-                <div className="flex items-center justify-center gap-3 mb-4">
-                    <Wand2 className="w-10 h-10 text-primary" />
-                    <h2 className="text-4xl font-bold tracking-tight">AI Image Enhancer</h2>
-                </div>
-                <p className="text-muted-foreground text-lg">
-                    Upscale and enhance your images with AI-powered models
-                </p>
-            </div>
-
-            <ImagePreview
-                original={imageState.original}
-                upscaled={imageState.upscaled}
-                processing={imageState.processing}
-                onResize={handleResize}
-            />
-
-            <div className="max-w-3xl mx-auto space-y-6">
-                {/* Model Selection */}
-                <div className="bg-card border rounded-lg p-6 space-y-4">
-                    <h3 className="font-semibold flex items-center gap-2">
-                        <Wand2 className="w-4 h-4 text-primary" />
-                        AI Model Selection
-                    </h3>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-muted-foreground">Model Category</label>
-                            <select
-                                className="w-full bg-secondary border-none rounded-lg px-4 py-2 text-sm"
-                                onChange={(e) => {
-                                    const category = MODEL_CATEGORIES.find(c => c.name === e.target.value);
-                                    if (category) {
-                                        setSelectedModel({
-                                            type: category.models[0].name,
-                                            scale: category.models[0].scales[0]
-                                        });
-                                    }
-                                }}
-                            >
-                                {MODEL_CATEGORIES.map(cat => (
-                                    <option key={cat.name} value={cat.name}>{cat.name}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-muted-foreground">Specific Model</label>
-                            <select
-                                className="w-full bg-secondary border-none rounded-lg px-4 py-2 text-sm"
-                                value={selectedModel.type}
-                                onChange={(e) => {
-                                    const model = MODEL_CATEGORIES.flatMap(c => c.models).find(m => m.name === e.target.value);
-                                    if (model) {
-                                        setSelectedModel({
-                                            type: model.name,
-                                            scale: model.scales[0]
-                                        });
-                                    }
-                                }}
-                            >
-                                {MODEL_CATEGORIES.flatMap(c => c.models).map(model => (
-                                    <option key={model.name} value={model.name}>{model.name}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-muted-foreground">Scale Factor</label>
-                            <div className="flex gap-2">
-                                {MODEL_CATEGORIES.flatMap(c => c.models)
-                                    .find(m => m.name === selectedModel.type)?.scales.map(scale => (
-                                        <button
-                                            key={scale}
-                                            onClick={() => setSelectedModel(prev => ({ ...prev, scale }))}
-                                            className={`flex-1 py-2 text-sm rounded-lg border transition-colors ${selectedModel.scale === scale
-                                                ? 'bg-primary text-primary-foreground border-primary'
-                                                : 'hover:bg-secondary'
-                                                }`}
-                                        >
-                                            {scale}x
-                                        </button>
-                                    ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex justify-center gap-4">
-                    <button
-                        onClick={handleUpscale}
-                        disabled={imageState.processing}
-                        className={`px-8 py-3 rounded-lg bg-primary text-primary-foreground font-medium flex items-center gap-2 transition-colors ${imageState.processing
-                            ? 'opacity-50 cursor-not-allowed'
-                            : 'hover:bg-primary/90'
-                            }`}
-                    >
-                        {imageState.processing ? (
-                            <>
-                                <div className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                                Processing...
-                            </>
-                        ) : (
-                            <>
-                                <Wand2 className="w-5 h-5" />
-                                Enhance Image
-                            </>
-                        )}
-                    </button>
-
-                    <button
-                        onClick={() => {
-                            setImageState({
-                                original: null,
-                                upscaled: null,
-                                processing: false,
-                                error: null,
-                            });
-                            setProcessableImage(null);
-                        }}
-                        disabled={imageState.processing}
-                        className="px-8 py-3 rounded-lg border bg-background text-foreground font-medium transition-colors hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        Start Over
-                    </button>
-                </div>
-
-                {imageState.error && (
-                    <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
-                        <p className="text-center text-destructive font-medium">{imageState.error}</p>
-                    </div>
-                )}
-            </div>
+      <div className="max-w-2xl mx-auto mt-10">
+        <div className="text-center mb-10 space-y-4">
+          <div className="flex items-center justify-center gap-3 mb-2">
+            <Wand2 className="w-9 h-9 text-primary" />
+            <h2 className="text-4xl font-bold tracking-tight">Upscale &amp; Sharpen</h2>
+          </div>
+          <p className="text-muted-foreground text-lg">
+            Enlarge images with high-quality Lanczos resampling and crisp sharpening. Fast,
+            reliable, and fully in your browser.
+          </p>
         </div>
+        <ImageUploader onImageSelect={handleSelect} />
+      </div>
     );
+  }
+
+  const ext = format.split('/')[1];
+
+  return (
+    <div className="grid lg:grid-cols-[320px_1fr] gap-6">
+      <div className="space-y-5 p-5 bg-card rounded-xl border shadow-sm h-fit">
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground">Scale factor</label>
+          <div className="grid grid-cols-3 gap-2">
+            {SCALES.map((s) => (
+              <button
+                key={s}
+                onClick={() => setScale(s)}
+                className={`py-2 text-sm rounded-lg border transition-colors ${
+                  scale === s ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-secondary'
+                }`}
+              >
+                {s}x
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {original.naturalWidth}×{original.naturalHeight} → {targetW}×{targetH}
+          </p>
+          {tooBig && <p className="text-xs text-destructive">Result exceeds 16384px. Pick a smaller scale.</p>}
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex justify-between text-xs">
+            <span className="font-medium">Sharpening</span>
+            <span className="text-muted-foreground font-mono">{Math.round(sharpen * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={2}
+            step={0.05}
+            value={sharpen}
+            onChange={(e) => setSharpen(Number(e.target.value))}
+            className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Output format</label>
+          <select
+            value={format}
+            onChange={(e) => setFormat(e.target.value as OutputFormat)}
+            className="w-full bg-secondary border-none rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="image/png">PNG (lossless)</option>
+            <option value="image/webp">WebP</option>
+            <option value="image/jpeg">JPEG</option>
+          </select>
+        </div>
+
+        <button
+          onClick={enhance}
+          disabled={processing || tooBig}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {processing ? (
+            <>
+              <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+              Processing…
+            </>
+          ) : (
+            <>
+              <ImageUp className="w-4 h-4" /> Enhance
+            </>
+          )}
+        </button>
+
+        {resultUrl && (
+          <a
+            href={resultUrl}
+            download={`enhanced_${scale}x.${ext}`}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary rounded-lg font-medium hover:bg-secondary/80 transition-colors"
+          >
+            <Download className="w-4 h-4" /> Download
+          </a>
+        )}
+
+        <button
+          onClick={() => {
+            setOriginal(null);
+            setResultUrl('');
+          }}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <RotateCcw className="w-4 h-4" /> Start over
+        </button>
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="flex flex-col gap-2">
+          <h3 className="font-medium text-sm text-center">Original</h3>
+          <div className="relative flex-1 min-h-[320px] bg-secondary/20 rounded-xl border overflow-hidden">
+            <div className="absolute inset-0 checkerboard opacity-50" />
+            <div className="absolute inset-0 flex items-center justify-center p-4">
+              <img src={originalUrl} alt="Original" className="max-w-full max-h-full object-contain" />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <h3 className="font-medium text-sm text-center">Enhanced</h3>
+          <div className="relative flex-1 min-h-[320px] bg-secondary/20 rounded-xl border overflow-hidden flex items-center justify-center">
+            <div className="absolute inset-0 checkerboard opacity-50" />
+            {processing ? (
+              <div className="relative w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            ) : resultUrl ? (
+              <div className="absolute inset-0 flex items-center justify-center p-4">
+                <img src={resultUrl} alt="Enhanced" className="max-w-full max-h-full object-contain" />
+              </div>
+            ) : (
+              <span className="relative text-sm text-muted-foreground">Enhanced image appears here</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
