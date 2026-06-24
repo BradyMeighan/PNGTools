@@ -8,7 +8,7 @@ export function Header() {
                     <Layers className="w-6 h-6 text-primary" />
                 </div>
                 <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-primary/50 bg-clip-text text-transparent">
-                    TransparentPNG
+                    PNG Tools
                 </h1>
             </div>
         </header>
