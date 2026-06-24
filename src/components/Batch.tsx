@@ -7,10 +7,12 @@ export function BatchDropzone({
   onFiles,
   compact = false,
   label = 'Drop images here or click to upload',
+  accept = 'image/*,.heic,.heif',
 }: {
   onFiles: (files: FileList | File[]) => void;
   compact?: boolean;
   label?: string;
+  accept?: string;
 }) {
   const [dragging, setDragging] = useState(false);
   const handleDrop = useCallback(
@@ -40,7 +42,7 @@ export function BatchDropzone({
     >
       <input
         type="file"
-        accept="image/*,.heic,.heif"
+        accept={accept}
         multiple
         className="absolute inset-0 opacity-0 cursor-pointer"
         onChange={(e) => e.target.files && onFiles(e.target.files)}

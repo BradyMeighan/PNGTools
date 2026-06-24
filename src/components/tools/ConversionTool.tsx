@@ -1,49 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FileType, Download, X, Loader2, Trash2 } from 'lucide-react';
-import heic2any from 'heic2any';
 import { useBatchQueue, type ProcessOne } from '../../hooks/useBatchQueue';
 import { BatchDropzone, BatchGrid } from '../Batch';
 import { InfoTip } from '../Tooltip';
+import {
+  convertImage,
+  getSupportedOutputFormats,
+  CONVERT_ACCEPT,
+  type OutputFormat,
+} from '../../lib/convert';
 
 interface ConversionSettings {
-  format: string; // image/webp | image/png | image/jpeg
+  format: OutputFormat;
   quality: number;
+  matte: string;
 }
 
-const processOne: ProcessOne<ConversionSettings> = async (file, settings) => {
-  let source: Blob = file;
-
-  // HEIC/HEIF needs decoding first (flaky, so it is isolated per item).
-  if (file.type === 'image/heic' || file.type === 'image/heif' || /\.heic$/i.test(file.name)) {
-    const res = await heic2any({ blob: file, toType: 'image/png' });
-    source = Array.isArray(res) ? res[0] : res;
-  }
-
-  const bitmap = await createImageBitmap(source);
-  const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas unavailable');
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, settings.format, settings.quality),
-  );
-  if (!blob) throw new Error('Unsupported output format');
-
-  const ext = settings.format.split('/')[1];
-  const name = file.name.replace(/\.[^.]+$/, '') + '.' + ext;
-  return { blob, name };
-};
+const processOne: ProcessOne<ConversionSettings> = (file, settings) => convertImage(file, settings);
 
 export function ConversionTool() {
   const q = useBatchQueue<ConversionSettings>(processOne);
-  const [format, setFormat] = useState('image/webp');
+  const [formats, setFormats] = useState<OutputFormat[]>([]);
+  const [formatMime, setFormatMime] = useState('image/webp');
   const [quality, setQuality] = useState(0.9);
+  const [matte, setMatte] = useState('#ffffff');
 
-  const lossy = format !== 'image/png';
+  // Detect which formats the browser can actually encode, then default sensibly.
+  useEffect(() => {
+    getSupportedOutputFormats().then((fmts) => {
+      setFormats(fmts);
+      setFormatMime((cur) => (fmts.some((f) => f.mime === cur) ? cur : fmts[0]?.mime ?? 'image/png'));
+    });
+  }, []);
+
+  const format = useMemo(
+    () => formats.find((f) => f.mime === formatMime) ?? formats[0],
+    [formats, formatMime],
+  );
 
   if (q.items.length === 0) {
     return (
@@ -53,11 +46,11 @@ export function ConversionTool() {
             Bulk Image Converter
           </h2>
           <p className="text-muted-foreground text-lg">
-            Convert any number of images to WebP, PNG, or JPEG at once. HEIC from iPhones is
-            supported. Download everything as a zip.
+            Convert any number of images at once. Reads PNG, JPG, WebP, AVIF, GIF, BMP, SVG, and
+            iPhone HEIC. Download everything as a zip.
           </p>
         </div>
-        <BatchDropzone onFiles={q.addFiles} />
+        <BatchDropzone onFiles={q.addFiles} accept={CONVERT_ACCEPT} />
       </div>
     );
   }
@@ -67,20 +60,24 @@ export function ConversionTool() {
       <div className="space-y-5 p-5 bg-card rounded-xl border shadow-sm h-fit">
         <div className="space-y-1.5">
           <span className="text-xs font-medium flex items-center gap-1.5">
-            Convert to <InfoTip text="WebP gives the best size for the web. PNG keeps transparency and is lossless. JPEG is smallest for photos without transparency." />
+            Convert to{' '}
+            <InfoTip text="Only formats your browser can actually produce are listed. WebP is best for the web; PNG keeps transparency; AVIF is smallest where supported." />
           </span>
           <select
-            value={format}
-            onChange={(e) => setFormat(e.target.value)}
+            value={formatMime}
+            onChange={(e) => setFormatMime(e.target.value)}
             className="w-full bg-secondary border-none rounded-lg px-3 py-2 text-sm"
           >
-            <option value="image/webp">WebP</option>
-            <option value="image/png">PNG</option>
-            <option value="image/jpeg">JPEG</option>
+            {formats.map((f) => (
+              <option key={f.mime} value={f.mime}>
+                {f.label}
+                {f.alpha ? '' : ' (no transparency)'}
+              </option>
+            ))}
           </select>
         </div>
 
-        {lossy && (
+        {format?.lossy && (
           <div className="space-y-1.5">
             <div className="flex justify-between items-center text-xs">
               <span className="font-medium">Quality</span>
@@ -98,6 +95,24 @@ export function ConversionTool() {
           </div>
         )}
 
+        {format && !format.alpha && (
+          <div className="space-y-1.5">
+            <span className="text-xs font-medium flex items-center gap-1.5">
+              Background{' '}
+              <InfoTip text="JPEG can't be transparent. Transparent areas are filled with this color instead of turning black." />
+            </span>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={matte}
+                onChange={(e) => setMatte(e.target.value)}
+                className="w-9 h-9 rounded-md border bg-transparent cursor-pointer"
+              />
+              <span className="text-xs text-muted-foreground font-mono">{matte}</span>
+            </div>
+          </div>
+        )}
+
         {q.running ? (
           <button
             onClick={q.cancel}
@@ -107,8 +122,9 @@ export function ConversionTool() {
           </button>
         ) : (
           <button
-            onClick={() => q.run({ format, quality })}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors"
+            onClick={() => format && q.run({ format, quality, matte })}
+            disabled={!format}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             <FileType className="w-4 h-4" /> Convert {q.totals.total} image{q.totals.total === 1 ? '' : 's'}
           </button>
@@ -136,7 +152,7 @@ export function ConversionTool() {
           {q.totals.done}/{q.totals.total} converted
           {q.totals.error > 0 && <span className="text-destructive text-sm">· {q.totals.error} failed</span>}
         </h3>
-        <BatchDropzone onFiles={q.addFiles} compact label="Add more images" />
+        <BatchDropzone onFiles={q.addFiles} compact label="Add more images" accept={CONVERT_ACCEPT} />
         <BatchGrid items={q.items} onRemove={q.removeItem} />
       </div>
     </div>
