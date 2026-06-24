@@ -8,6 +8,7 @@ import {
   type TransparencyState,
 } from '../lib/transparency/engine';
 import { detectBackground } from '../lib/transparency/analyze';
+import { aiCutout } from '../lib/transparency/cutout';
 import {
   DEFAULT_RENDER_SETTINGS,
   type RemovalOp,
@@ -57,6 +58,9 @@ export function useTransparencyEditor() {
   const [tool, setToolState] = useState<ToolSettings>(DEFAULT_TOOL);
   const [settings, setSettingsState] = useState<RenderSettings>(DEFAULT_RENDER_SETTINGS);
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiProgress, setAiProgress] = useState<{ p: number; label: string } | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const settingsRef = useRef(settings);
   const metricRef = useRef<DistanceMetric>(settings.metric);
@@ -263,6 +267,25 @@ export function useTransparencyEditor() {
     [commitOp],
   );
 
+  // One-click AI subject cutout. Result seeds the mask so it can still be refined.
+  const runAiCutout = useCallback(async () => {
+    const st = stateRef.current;
+    if (!st || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    setAiProgress({ p: 0, label: 'Starting…' });
+    try {
+      const mask = await aiCutout(st.src, st.width, st.height, (p, label) => setAiProgress({ p, label }));
+      pushAiMask(mask);
+    } catch (e) {
+      console.error('AI cutout failed', e);
+      setAiError('AI background removal could not run. Make sure you are online the first time you use it.');
+    } finally {
+      setAiBusy(false);
+      setAiProgress(null);
+    }
+  }, [aiBusy, pushAiMask]);
+
   const undo = useCallback(() => {
     setOps((prev) => {
       if (!prev.length) return prev;
@@ -334,6 +357,10 @@ export function useTransparencyEditor() {
     endStroke,
     pushAiMask,
     autoRemove,
+    runAiCutout,
+    aiBusy,
+    aiProgress,
+    aiError,
     undo,
     redo,
     reset,

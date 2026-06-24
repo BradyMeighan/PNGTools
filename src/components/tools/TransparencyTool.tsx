@@ -197,14 +197,35 @@ export function TransparencyTool() {
       {/* Sidebar */}
       <div className="space-y-5 p-5 bg-card rounded-xl border shadow-sm overflow-y-auto max-h-[calc(100vh-12rem)]">
         {/* Auto */}
-        <Tooltip text="Detect the background color and remove it again. Handy after you've changed the image or want a fresh start.">
-          <button
-            onClick={ed.autoRemove}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
-          >
-            <Sparkles className="w-4 h-4" /> Auto-remove background
-          </button>
-        </Tooltip>
+        <div className="space-y-2">
+          <Tooltip text="Detect the background color and remove it again. Best for solid or simple backgrounds.">
+            <button
+              onClick={ed.autoRemove}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
+            >
+              <Sparkles className="w-4 h-4" /> Auto-remove background
+            </button>
+          </Tooltip>
+          <Tooltip text="Uses AI to cut out the main subject. Best for photos of people or products on busy backgrounds. Downloads a small model the first time.">
+            <button
+              onClick={ed.runAiCutout}
+              disabled={ed.aiBusy}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 border rounded-lg text-sm font-medium hover:bg-secondary transition-colors disabled:opacity-60"
+            >
+              {ed.aiBusy ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  {ed.aiProgress?.label ?? 'Working…'}
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-4 h-4 text-primary" /> Remove background (AI)
+                </>
+              )}
+            </button>
+          </Tooltip>
+          {ed.aiError && <p className="text-[11px] text-destructive leading-snug">{ed.aiError}</p>}
+        </div>
 
         {/* What do you want to do */}
         <div className="space-y-2">
