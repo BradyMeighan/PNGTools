@@ -1,73 +1,44 @@
-# React + TypeScript + Vite
+# PNG Tools
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A fast, private, browser-based image toolkit. Everything runs locally in the
+browser: images are never uploaded to a server.
 
-Currently, two official plugins are available:
+## Tools
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Transparency** — Remove backgrounds. Auto-detects and removes the background
+  on upload, then lets you refine with click-to-erase, a restore tool, and a
+  brush. Smooth anti-aliased edges with color-fringe removal (defringe), zoom and
+  pan, full undo/redo, and an optional one-click AI cutout for photos.
+- **Compression** — Bulk-compress many images at once with a quality slider and
+  optional max-dimension downscaling. Shows per-file savings and a zip download.
+- **Converter** — Bulk-convert images to WebP, PNG, or JPEG. Handles iPhone HEIC.
+- **Enhancer** — Upscale and sharpen. "High quality" uses Lanczos resampling
+  (instant, reliable); "AI" uses Real-ESRGAN x4 (tiled, best for small images).
+- **Favicon** — Generate a full favicon set plus `site.webmanifest` from one image.
 
-## React Compiler
+## How it works
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Built with React 19, Vite, TypeScript, and Tailwind CSS.
+- The transparency engine (`src/lib/transparency`) keeps the original pixels
+  immutable and folds a list of reversible operations into a coverage mask, which
+  is what powers staged, non-destructive editing and undo/redo.
+- AI features use `onnxruntime-web` with self-hosted, permissively-licensed models
+  (U2Net-p for cutout, Real-ESRGAN general x4 v3 for upscaling) under
+  `public/models`. The runtime and models are lazy-loaded only on first AI use.
+- Tools are code-split, so the initial page load stays small.
 
-## Expanding the ESLint configuration
+## Develop
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # type-check + production build to dist/
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Notes on the AI runtime
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+The ONNX Runtime wasm assets live in `public/ort` (copied from
+`node_modules/onnxruntime-web/dist`). In production they are served from there; in
+the Vite dev server they load from a version-matched CDN to avoid a dev-only
+module-rewriting issue. If you upgrade `onnxruntime-web`, refresh `public/ort` and
+the version pin in `src/lib/onnx/session.ts`.

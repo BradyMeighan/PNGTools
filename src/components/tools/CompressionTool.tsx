@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import imageCompression from 'browser-image-compression';
 import { Download, Minimize2, X, Loader2, Trash2 } from 'lucide-react';
 import { useBatchQueue, type ProcessOne } from '../../hooks/useBatchQueue';
-import { BatchDropzone, BatchGrid, formatSize } from '../Batch';
+import { BatchDropzone, BatchGrid } from '../Batch';
 import { Tooltip, InfoTip } from '../Tooltip';
+import { formatSize } from '../../lib/utils';
 
 interface CompressionSettings {
   quality: number;

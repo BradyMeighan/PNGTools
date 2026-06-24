@@ -1,12 +1,33 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Header } from './components/Header';
 import { ToolSwitcher } from './components/ToolSwitcher';
 import type { ToolType } from './components/ToolSwitcher';
-import { TransparencyTool } from './components/tools/TransparencyTool';
-import { CompressionTool } from './components/tools/CompressionTool';
-import { ConversionTool } from './components/tools/ConversionTool';
-import { EnhancerTool } from './components/tools/EnhancerTool';
-import { FaviconGeneratorTool } from './components/tools/FaviconGeneratorTool';
+
+// Each tool (and its heavier dependencies) loads only when first opened, keeping
+// the initial page fast.
+const TransparencyTool = lazy(() =>
+  import('./components/tools/TransparencyTool').then((m) => ({ default: m.TransparencyTool })),
+);
+const CompressionTool = lazy(() =>
+  import('./components/tools/CompressionTool').then((m) => ({ default: m.CompressionTool })),
+);
+const ConversionTool = lazy(() =>
+  import('./components/tools/ConversionTool').then((m) => ({ default: m.ConversionTool })),
+);
+const EnhancerTool = lazy(() =>
+  import('./components/tools/EnhancerTool').then((m) => ({ default: m.EnhancerTool })),
+);
+const FaviconGeneratorTool = lazy(() =>
+  import('./components/tools/FaviconGeneratorTool').then((m) => ({ default: m.FaviconGeneratorTool })),
+);
+
+function ToolFallback() {
+  return (
+    <div className="flex items-center justify-center py-32">
+      <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 function App() {
   const [activeTool, setActiveTool] = useState<ToolType>('transparency');
@@ -19,11 +40,13 @@ function App() {
         <ToolSwitcher activeTool={activeTool} onToolChange={setActiveTool} />
 
         <div className="animate-in fade-in duration-300 slide-in-from-bottom-4">
-          {activeTool === 'transparency' && <TransparencyTool />}
-          {activeTool === 'compression' && <CompressionTool />}
-          {activeTool === 'conversion' && <ConversionTool />}
-          {activeTool === 'enhancer' && <EnhancerTool />}
-          {activeTool === 'favicon' && <FaviconGeneratorTool />}
+          <Suspense fallback={<ToolFallback />}>
+            {activeTool === 'transparency' && <TransparencyTool />}
+            {activeTool === 'compression' && <CompressionTool />}
+            {activeTool === 'conversion' && <ConversionTool />}
+            {activeTool === 'enhancer' && <EnhancerTool />}
+            {activeTool === 'favicon' && <FaviconGeneratorTool />}
+          </Suspense>
         </div>
       </main>
     </div>

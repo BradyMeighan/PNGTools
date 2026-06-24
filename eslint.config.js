@@ -19,5 +19,12 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Experimental react-compiler rule: false-positives on custom hooks that
+      // return a ref-setter callback (it taints the whole returned object, e.g.
+      // flagging plain state like `editor.imageSize.w`). The real rules of hooks
+      // and exhaustive-deps stay on.
+      'react-hooks/refs': 'off',
+    },
   },
 ])

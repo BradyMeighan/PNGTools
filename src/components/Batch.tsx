@@ -1,15 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Upload, Download, X, CheckCircle2, AlertCircle, Loader2, Plus } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, formatSize } from '../lib/utils';
 import type { BatchItem } from '../hooks/useBatchQueue';
-
-export function formatSize(bytes: number): string {
-  if (!bytes) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-}
 
 export function BatchDropzone({
   onFiles,

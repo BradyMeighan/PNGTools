@@ -3,10 +3,12 @@ import { ImageUploader } from '../ImageUploader';
 import { Image, Download, CheckCircle2, RefreshCw } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import { InfoTip } from '../Tooltip';
 
 export function FaviconGeneratorTool() {
     const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
+    const [siteName, setSiteName] = useState('My Website');
 
     const handleImageSelect = (file: File) => {
         const img = document.createElement('img');
@@ -51,8 +53,8 @@ export function FaviconGeneratorTool() {
 
             // site.webmanifest
             const manifest = {
-                "name": "My Website",
-                "short_name": "Website",
+                "name": siteName || "My Website",
+                "short_name": (siteName || "Website").slice(0, 12),
                 "icons": [
                     { "src": "/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
                     { "src": "/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
@@ -106,6 +108,21 @@ export function FaviconGeneratorTool() {
                 <div className="flex flex-col justify-center gap-6">
                     <div className="space-y-4">
                         <h3 className="text-2xl font-bold">Ready to Generate</h3>
+
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                                Site name
+                                <InfoTip text="Used inside site.webmanifest for the name shown when your site is installed to a home screen." />
+                            </label>
+                            <input
+                                type="text"
+                                value={siteName}
+                                onChange={(e) => setSiteName(e.target.value)}
+                                placeholder="My Website"
+                                className="w-full px-3 py-2 rounded-md bg-secondary border-none text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                            />
+                        </div>
+
                         <p className="text-muted-foreground">
                             We will generate the following files:
                         </p>
