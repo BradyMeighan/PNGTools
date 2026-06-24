@@ -152,9 +152,13 @@ export function TransparencyTool() {
   };
 
   const handleReset = () => {
-    if (ed.canUndo && !window.confirm('Reset to the automatic background removal? Your manual edits will be cleared.'))
-      return;
+    if (ed.canUndo && !window.confirm('Clear all edits and show the original image?')) return;
     ed.reset();
+  };
+
+  const handleClearImage = () => {
+    if (ed.canUndo && !window.confirm('Discard this image and start over with a new one?')) return;
+    ed.clearImage();
   };
 
   if (!ed.imageSize) {
@@ -393,13 +397,24 @@ export function TransparencyTool() {
             />
           </ZoomPanCanvas>
 
+          {/* Clear / start over with a new image */}
+          <Tooltip text="Remove this image and upload a different one" side="top">
+            <button
+              onClick={handleClearImage}
+              className="absolute top-3 right-3 z-10 p-2 rounded-lg bg-card/90 backdrop-blur border shadow-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </Tooltip>
+
           {showHint && (
-            <div className="absolute top-3 left-3 right-3 flex items-start gap-3 bg-card/95 backdrop-blur border rounded-lg px-4 py-3 shadow-lg max-w-xl">
+            <div className="absolute top-3 left-3 right-16 flex items-start gap-3 bg-card/95 backdrop-blur border rounded-lg px-4 py-3 shadow-lg max-w-lg">
               <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
               <p className="text-sm text-muted-foreground leading-snug flex-1">
-                Background removed automatically. Click any leftover bits to erase them, switch to{' '}
-                <span className="text-foreground font-medium">Restore</span> to bring parts back, and press{' '}
-                <kbd className="px-1 rounded bg-secondary text-xs">Ctrl+Z</kbd> to undo. You can never lose your work.
+                Click the background to erase it, or hit{' '}
+                <span className="text-foreground font-medium">Auto-remove background</span>. Use{' '}
+                <span className="text-foreground font-medium">Restore</span> to bring parts back, and{' '}
+                <kbd className="px-1 rounded bg-secondary text-xs">Ctrl+Z</kbd> to undo.
               </p>
               <button onClick={() => setShowHint(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
@@ -421,7 +436,7 @@ export function TransparencyTool() {
                 <Redo2 className="w-4 h-4" />
               </button>
             </Tooltip>
-            <Tooltip text="Clear manual edits and revert to the automatic background removal" side="top">
+            <Tooltip text="Clear all edits and show the original image" side="top">
               <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg hover:bg-secondary transition-colors">
                 <RotateCcw className="w-4 h-4" /> Reset
               </button>

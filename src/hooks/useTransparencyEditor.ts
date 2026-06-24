@@ -149,10 +149,19 @@ export function useTransparencyEditor() {
       opCounter = 0;
       setRedoStack([]);
       setImageSize({ w, h });
-      // Instant result: auto-detect and remove the background on upload.
-      setOps([buildAutoOp(stateRef.current)]);
+      setOps([]);
+      // Prime the tool with the detected background color so "Auto-remove" and
+      // click-to-erase have good defaults, but do not remove anything yet.
+      const guess = detectBackground(stateRef.current.src, w, h);
+      setToolState((t) => ({
+        ...t,
+        color: guess.color,
+        tolerance: guess.tolerance,
+        softness: guess.softness,
+        action: 'erase',
+      }));
     },
-    [buildAutoOp],
+    [],
   );
 
   const loadFile = useCallback(
@@ -304,14 +313,20 @@ export function useTransparencyEditor() {
     });
   }, []);
 
-  // Reset back to just the automatic background removal (not a blank slate),
-  // so "Reset" is forgiving rather than destructive.
+  // Clear all edits and show the original image again.
   const reset = useCallback(() => {
-    const st = stateRef.current;
-    if (!st) return;
-    setOps([buildAutoOp(st)]);
+    setOps([]);
     setRedoStack([]);
-  }, [buildAutoOp]);
+  }, []);
+
+  // Throw away the current image entirely and return to the uploader.
+  const clearImage = useCallback(() => {
+    stateRef.current = null;
+    opCounter = 0;
+    setOps([]);
+    setRedoStack([]);
+    setImageSize(null);
+  }, []);
 
   const exportBlob = useCallback(async (): Promise<Blob | null> => {
     const st = stateRef.current;
@@ -364,7 +379,8 @@ export function useTransparencyEditor() {
     undo,
     redo,
     reset,
-    canUndo: ops.length > 1,
+    clearImage,
+    canUndo: ops.length > 0,
     canRedo: redoStack.length > 0,
     exportBlob,
   };
