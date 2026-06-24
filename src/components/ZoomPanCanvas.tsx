@@ -163,7 +163,11 @@ export const ZoomPanCanvas = forwardRef<ZoomPanHandle, ZoomPanCanvasProps>(funct
     panMode || spaceHeld.current || e.button === 1 || e.button === 2;
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    try {
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    } catch {
+      // No active pointer (e.g. synthetic events); capture is a best-effort nicety.
+    }
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (pointers.current.size === 2) {
