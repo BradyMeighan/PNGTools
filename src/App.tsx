@@ -8,6 +8,9 @@ import type { ToolType } from './components/ToolSwitcher';
 const TransparencyTool = lazy(() =>
   import('./components/tools/TransparencyTool').then((m) => ({ default: m.TransparencyTool })),
 );
+const CropTool = lazy(() =>
+  import('./components/tools/CropTool').then((m) => ({ default: m.CropTool })),
+);
 const CompressionTool = lazy(() =>
   import('./components/tools/CompressionTool').then((m) => ({ default: m.CompressionTool })),
 );
@@ -42,6 +45,7 @@ function App() {
         <div className="animate-in fade-in duration-300 slide-in-from-bottom-4">
           <Suspense fallback={<ToolFallback />}>
             {activeTool === 'transparency' && <TransparencyTool />}
+            {activeTool === 'crop' && <CropTool />}
             {activeTool === 'compression' && <CompressionTool />}
             {activeTool === 'conversion' && <ConversionTool />}
             {activeTool === 'enhancer' && <EnhancerTool />}

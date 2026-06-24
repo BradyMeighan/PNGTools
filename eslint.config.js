@@ -25,6 +25,9 @@ export default defineConfig([
       // flagging plain state like `editor.imageSize.w`). The real rules of hooks
       // and exhaustive-deps stay on.
       'react-hooks/refs': 'off',
+      // Also experimental: flags standard `e.preventDefault()` in event handlers
+      // as a render-phase mutation. Off until it stabilizes.
+      'react-hooks/immutability': 'off',
     },
   },
 ])

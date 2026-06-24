@@ -1,7 +1,7 @@
-import { Eraser, Minimize2, FileType, Wand2, Image } from 'lucide-react';
+import { Eraser, Minimize2, FileType, Wand2, Image, Crop } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-export type ToolType = 'transparency' | 'compression' | 'conversion' | 'enhancer' | 'favicon';
+export type ToolType = 'transparency' | 'crop' | 'compression' | 'conversion' | 'enhancer' | 'favicon';
 
 interface ToolSwitcherProps {
     activeTool: ToolType;
@@ -11,6 +11,7 @@ interface ToolSwitcherProps {
 export function ToolSwitcher({ activeTool, onToolChange }: ToolSwitcherProps) {
     const tools: { id: ToolType; label: string; icon: React.ElementType }[] = [
         { id: 'transparency', label: 'Transparency', icon: Eraser },
+        { id: 'crop', label: 'Crop', icon: Crop },
         { id: 'compression', label: 'Compression', icon: Minimize2 },
         { id: 'conversion', label: 'Converter', icon: FileType },
         { id: 'enhancer', label: 'Enhancer', icon: Wand2 },
