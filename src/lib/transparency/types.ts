@@ -24,6 +24,7 @@ export interface RemovalOp {
   tolerance: number; // 0..1 normalized inner radius
   softness: number; // 0..1 width of the anti-aliased band
   contiguous?: boolean; // flood (true) vs global (false); informational
+  fromEdges?: boolean; // flood inward from all borders (auto-remove)
   seedX?: number;
   seedY?: number;
   // Brush (manual erase / restore).

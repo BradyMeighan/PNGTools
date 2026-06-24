@@ -21,11 +21,51 @@ export function floodRegion(
   out: Float32Array,
 ): void {
   out.fill(0);
-  const n = width * height;
   if (seedX < 0 || seedY < 0 || seedX >= width || seedY >= height) return;
 
+  floodFrom(src, width, height, [seedY * width + seedX], target, inner, outer, metric, out);
+}
+
+// Flood inward from every border pixel at once. This is the "remove the background
+// that touches the edges" behaviour, used by auto-remove. It leaves enclosed
+// pockets (like the inside of an O) alone, which is usually what people want.
+export function floodFromEdges(
+  src: Uint8ClampedArray,
+  width: number,
+  height: number,
+  target: RGB,
+  inner: number,
+  outer: number,
+  metric: DistanceMetric,
+  out: Float32Array,
+): void {
+  out.fill(0);
+  const seeds: number[] = [];
+  for (let x = 0; x < width; x++) {
+    seeds.push(x);
+    seeds.push((height - 1) * width + x);
+  }
+  for (let y = 1; y < height - 1; y++) {
+    seeds.push(y * width);
+    seeds.push(y * width + width - 1);
+  }
+  floodFrom(src, width, height, seeds, target, inner, outer, metric, out);
+}
+
+function floodFrom(
+  src: Uint8ClampedArray,
+  width: number,
+  height: number,
+  seeds: number[],
+  target: RGB,
+  inner: number,
+  outer: number,
+  metric: DistanceMetric,
+  out: Float32Array,
+): void {
+  const n = width * height;
   const visited = new Uint8Array(n);
-  const stack: number[] = [seedY * width + seedX];
+  const stack: number[] = seeds.filter((i) => i >= 0 && i < n);
   const band = Math.max(outer - inner, 1e-6);
 
   while (stack.length) {

@@ -1,6 +1,6 @@
 import type { RGB, DistanceMetric, RemovalOp, RenderSettings, BrushPoint } from './types';
 import { colorDistance, smoothstep01 } from './color';
-import { floodRegion } from './flood';
+import { floodRegion, floodFromEdges } from './flood';
 import { gaussianBlurCoverage, despeckleCoverage } from './filters';
 
 // Immutable original pixels plus the mutable coverage ("keep") buffer and the
@@ -128,7 +128,14 @@ export function applyOp(state: TransparencyState, op: RemovalOp, metric: Distanc
     const inner = op.tolerance;
     const outer = Math.min(1, op.tolerance + Math.max(op.softness, 0.001));
 
-    if (op.kind === 'flood' && op.seedX != null && op.seedY != null) {
+    if (op.kind === 'flood' && op.fromEdges) {
+      const region = new Float32Array(n);
+      floodFromEdges(src, width, height, color, inner, outer, metric, region);
+      for (let i = 0; i < n; i++) {
+        const s = region[i];
+        if (s > 0) combine(state, i, s, color, restore);
+      }
+    } else if (op.kind === 'flood' && op.seedX != null && op.seedY != null) {
       const region = new Float32Array(n);
       floodRegion(src, width, height, op.seedX | 0, op.seedY | 0, color, inner, outer, metric, region);
       for (let i = 0; i < n; i++) {

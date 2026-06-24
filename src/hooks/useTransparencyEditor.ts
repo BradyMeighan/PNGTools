@@ -7,11 +7,11 @@ import {
   pixelColorAt,
   type TransparencyState,
 } from '../lib/transparency/engine';
+import { detectBackground } from '../lib/transparency/analyze';
 import {
   DEFAULT_RENDER_SETTINGS,
   type RemovalOp,
   type RenderSettings,
-  type SelectionMode,
   type RGB,
   type DistanceMetric,
 } from '../lib/transparency/types';
@@ -20,9 +20,12 @@ import type { ImagePoint } from '../components/ZoomPanCanvas';
 let opCounter = 0;
 const nextId = () => `op_${++opCounter}`;
 
+// The user only ever picks one of two intents. Everything else is automatic.
+export type Action = 'erase' | 'restore';
+
 export interface ToolSettings {
   tool: 'wand' | 'brush';
-  mode: SelectionMode;
+  action: Action;
   color: RGB;
   tolerance: number; // 0..1
   softness: number; // 0..1
@@ -33,10 +36,10 @@ export interface ToolSettings {
 
 const DEFAULT_TOOL: ToolSettings = {
   tool: 'wand',
-  mode: 'add',
+  action: 'erase',
   color: { r: 255, g: 255, b: 255 },
   tolerance: 0.08,
-  softness: 0.04,
+  softness: 0.05,
   contiguous: true,
   brushSize: 28,
   brushHardness: 0.6,
@@ -55,7 +58,6 @@ export function useTransparencyEditor() {
   const [settings, setSettingsState] = useState<RenderSettings>(DEFAULT_RENDER_SETTINGS);
   const [busy, setBusy] = useState(false);
 
-  // Refs mirror the latest state so rAF/pointer callbacks never read stale closures.
   const settingsRef = useRef(settings);
   const metricRef = useRef<DistanceMetric>(settings.metric);
   const toolRef = useRef(tool);
@@ -77,7 +79,6 @@ export function useTransparencyEditor() {
     canvasRef.current = el;
   }, []);
 
-  // Draw the current engine output into the bound display canvas.
   const blit = useCallback(() => {
     const st = stateRef.current;
     const cv = canvasRef.current;
@@ -95,7 +96,6 @@ export function useTransparencyEditor() {
     });
   }, [blit]);
 
-  // Re-fold whenever the committed op list changes, then redraw.
   useEffect(() => {
     const st = stateRef.current;
     if (!st) return;
@@ -105,26 +105,51 @@ export function useTransparencyEditor() {
     setBusy(false);
   }, [ops, blit]);
 
-  // Redraw when render settings change (no refold needed; render reads buffers).
   useEffect(() => {
     scheduleBlit();
   }, [settings, scheduleBlit]);
 
-  const loadImageElement = useCallback((img: HTMLImageElement) => {
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    const ctx = c.getContext('2d', { willReadFrequently: true })!;
-    ctx.drawImage(img, 0, 0);
-    const data = ctx.getImageData(0, 0, w, h).data;
-    stateRef.current = createState(w, h, data);
-    opCounter = 0;
-    setOps([]);
-    setRedoStack([]);
-    setImageSize({ w, h });
+  // Build the automatic "remove the background" op from a detected color.
+  const buildAutoOp = useCallback((st: TransparencyState): RemovalOp => {
+    const guess = detectBackground(st.src, st.width, st.height);
+    setToolState((t) => ({
+      ...t,
+      color: guess.color,
+      tolerance: guess.tolerance,
+      softness: guess.softness,
+      action: 'erase',
+    }));
+    return {
+      id: nextId(),
+      kind: 'flood',
+      fromEdges: true,
+      mode: 'new',
+      color: guess.color,
+      tolerance: guess.tolerance,
+      softness: guess.softness,
+      contiguous: true,
+    };
   }, []);
+
+  const loadImageElement = useCallback(
+    (img: HTMLImageElement) => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, w, h).data;
+      stateRef.current = createState(w, h, data);
+      opCounter = 0;
+      setRedoStack([]);
+      setImageSize({ w, h });
+      // Instant result: auto-detect and remove the background on upload.
+      setOps([buildAutoOp(stateRef.current)]);
+    },
+    [buildAutoOp],
+  );
 
   const loadFile = useCallback(
     (file: File) => {
@@ -139,14 +164,22 @@ export function useTransparencyEditor() {
     [loadImageElement],
   );
 
+  // Re-run automatic background detection (the "Auto" button). Undoable.
+  const autoRemove = useCallback(() => {
+    const st = stateRef.current;
+    if (!st) return;
+    setOps((prev) => [...prev, buildAutoOp(st)]);
+    setRedoStack([]);
+  }, [buildAutoOp]);
+
   const commitOp = useCallback((op: RemovalOp) => {
     setOps((prev) => [...prev, op]);
     setRedoStack([]);
   }, []);
 
-  // Wand click: pick the color under the cursor, then remove/add/subtract a region.
+  // A click erases (or restores) a region around the picked color.
   const wandAt = useCallback(
-    (pt: ImagePoint, mode: SelectionMode) => {
+    (pt: ImagePoint, action: Action) => {
       const st = stateRef.current;
       if (!st) return;
       const x = Math.floor(pt.x);
@@ -158,7 +191,7 @@ export function useTransparencyEditor() {
       commitOp({
         id: nextId(),
         kind: t.contiguous ? 'flood' : 'global',
-        mode,
+        mode: action === 'restore' ? 'subtract' : 'add',
         color,
         tolerance: t.tolerance,
         softness: t.softness,
@@ -170,28 +203,24 @@ export function useTransparencyEditor() {
     [commitOp],
   );
 
-  // Live re-tune of the most recent color op while dragging tolerance/softness.
   const retuneLast = useCallback((patch: { tolerance?: number; softness?: number }) => {
     setOps((prev) => {
       if (!prev.length) return prev;
       const last = prev[prev.length - 1];
       if (last.kind !== 'flood' && last.kind !== 'global') return prev;
-      const updated = { ...last, ...patch };
-      return [...prev.slice(0, -1), updated];
+      return [...prev.slice(0, -1), { ...last, ...patch }];
     });
   }, []);
 
-  // Brush stroke lifecycle. During the drag we stamp incrementally for smoothness
-  // and only commit the full stroke as one undoable op on release.
   const beginStroke = useCallback(
-    (pt: ImagePoint) => {
+    (pt: ImagePoint, action: Action) => {
       const st = stateRef.current;
       if (!st) return;
       const t = toolRef.current;
       const op: RemovalOp = {
         id: nextId(),
         kind: 'brush',
-        mode: t.mode === 'subtract' ? 'subtract' : 'add',
+        mode: action === 'restore' ? 'subtract' : 'add',
         tolerance: 0,
         softness: 0,
         stroke: [{ x: pt.x, y: pt.y }],
@@ -212,7 +241,6 @@ export function useTransparencyEditor() {
       if (!st || !op || !op.stroke) return;
       const prev = op.stroke[op.stroke.length - 1];
       op.stroke.push({ x: pt.x, y: pt.y });
-      // Stamp only the new segment for speed.
       applyOp(st, { ...op, stroke: [prev, { x: pt.x, y: pt.y }] }, metricRef.current);
       scheduleBlit();
     },
@@ -229,8 +257,8 @@ export function useTransparencyEditor() {
   }, []);
 
   const pushAiMask = useCallback(
-    (mask: Uint8Array, mode: SelectionMode = 'new') => {
-      commitOp({ id: nextId(), kind: 'ai', mode, tolerance: 0, softness: 0, aiMask: mask });
+    (mask: Uint8Array) => {
+      commitOp({ id: nextId(), kind: 'ai', mode: 'new', tolerance: 0, softness: 0, aiMask: mask });
     },
     [commitOp],
   );
@@ -253,10 +281,14 @@ export function useTransparencyEditor() {
     });
   }, []);
 
-  const clear = useCallback(() => {
-    setOps([]);
+  // Reset back to just the automatic background removal (not a blank slate),
+  // so "Reset" is forgiving rather than destructive.
+  const reset = useCallback(() => {
+    const st = stateRef.current;
+    if (!st) return;
+    setOps([buildAutoOp(st)]);
     setRedoStack([]);
-  }, []);
+  }, [buildAutoOp]);
 
   const exportBlob = useCallback(async (): Promise<Blob | null> => {
     const st = stateRef.current;
@@ -268,7 +300,6 @@ export function useTransparencyEditor() {
     return new Promise((resolve) => c.toBlob(resolve, 'image/png'));
   }, []);
 
-  // Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z (or Ctrl+Y) redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.ctrlKey || e.metaKey;
@@ -302,10 +333,11 @@ export function useTransparencyEditor() {
     extendStroke,
     endStroke,
     pushAiMask,
+    autoRemove,
     undo,
     redo,
-    clear,
-    canUndo: ops.length > 0,
+    reset,
+    canUndo: ops.length > 1,
     canRedo: redoStack.length > 0,
     exportBlob,
   };
