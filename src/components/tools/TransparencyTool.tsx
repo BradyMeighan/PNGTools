@@ -398,17 +398,16 @@ export function TransparencyTool() {
           </ZoomPanCanvas>
 
           {/* Clear / start over with a new image */}
-          <Tooltip text="Remove this image and upload a different one" side="top">
-            <button
-              onClick={handleClearImage}
-              className="absolute top-3 right-3 z-10 p-2 rounded-lg bg-card/90 backdrop-blur border shadow-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </Tooltip>
+          <button
+            onClick={handleClearImage}
+            title="Close this image and upload a new one"
+            className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-card border shadow-lg text-sm font-medium hover:bg-destructive hover:text-destructive-foreground hover:border-destructive transition-colors"
+          >
+            <X className="w-4 h-4" /> Close
+          </button>
 
           {showHint && (
-            <div className="absolute top-3 left-3 right-16 flex items-start gap-3 bg-card/95 backdrop-blur border rounded-lg px-4 py-3 shadow-lg max-w-lg">
+            <div className="absolute top-3 left-3 max-w-md flex items-start gap-3 bg-card/95 backdrop-blur border rounded-lg px-4 py-3 shadow-lg">
               <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
               <p className="text-sm text-muted-foreground leading-snug flex-1">
                 Click the background to erase it, or hit{' '}
