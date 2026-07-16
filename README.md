@@ -1,7 +1,8 @@
-# PNG Tools
+# Quick Asset Tools
 
-A fast, private, browser-based image toolkit. Everything runs locally in the
-browser: images are never uploaded to a server.
+A fast, private, browser-based image and video toolkit for everyday website
+asset work. Everything runs locally in the browser: files are never uploaded to
+a server.
 
 ## Tools
 
@@ -9,12 +10,22 @@ browser: images are never uploaded to a server.
   on upload, then lets you refine with click-to-erase, a restore tool, and a
   brush. Smooth anti-aliased edges with color-fringe removal (defringe), zoom and
   pan, full undo/redo, and an optional one-click AI cutout for photos.
+- **Crop** — Manually crop, snap to website/social aspect ratios, or automatically
+  trim empty edges.
 - **Compression** — Bulk-compress many images at once with a quality slider and
   optional max-dimension downscaling. Shows per-file savings and a zip download.
 - **Converter** — Bulk-convert images to WebP, PNG, or JPEG. Handles iPhone HEIC.
 - **Enhancer** — Upscale and sharpen. "High quality" uses Lanczos resampling
   (instant, reliable); "AI" uses Real-ESRGAN x4 (tiled, best for small images).
 - **Favicon** — Generate a full favicon set plus `site.webmanifest` from one image.
+- **Video trim** — Remove the end of MP4, MOV, WebM, or MKV videos with a lossless
+  packet copy, or extract a frame-precise slice with browser-native hardware
+  acceleration when available. Large files can stream directly to disk in
+  browsers that support the File System Access API.
+- **AI video / FPS Boost** — Use RIFE to create real in-between frames at 2x or
+  4x FPS, with scene-cut protection and full or balanced motion analysis.
+- **AI video / AI Upscale** — Use AMD SESR for native learned 2x
+  super-resolution, including 1080p-to-4K delivery.
 
 ## How it works
 
@@ -25,7 +36,12 @@ browser: images are never uploaded to a server.
 - AI features use `onnxruntime-web` with self-hosted, permissively-licensed models
   (U2Net-p for cutout, Real-ESRGAN general x4 v3 for upscaling) under
   `public/models`. The runtime and models are lazy-loaded only on first AI use.
+- AI video reports model download, engine initialization, processing, encoding,
+  and saving as separate stages. WebGPU is preferred in current Chrome/Edge,
+  with a slower WASM fallback. Models may download; user media never uploads.
 - Tools are code-split, so the initial page load stays small.
+
+See [`docs/AI_MODELS.md`](docs/AI_MODELS.md) for model provenance, hashes, and licenses.
 
 ## Develop
 
