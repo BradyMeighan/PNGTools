@@ -4,35 +4,46 @@
 
 @layer base {
   :root {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    
-    --radius: 0.5rem;
+    --background: 210 18% 7%;
+    --foreground: 195 20% 94%;
+
+    --card: 208 16% 10%;
+    --card-foreground: 195 20% 94%;
+
+    --popover: 207 16% 12%;
+    --popover-foreground: 195 20% 94%;
+
+    --primary: 184 64% 46%;
+    --primary-foreground: 210 24% 7%;
+
+    --secondary: 207 15% 15%;
+    --secondary-foreground: 195 16% 90%;
+
+    --muted: 207 14% 13%;
+    --muted-foreground: 203 10% 66%;
+
+    --accent: 204 22% 18%;
+    --accent-foreground: 190 20% 92%;
+
+    --destructive: 4 70% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 205 14% 23%;
+    --input: 205 15% 18%;
+    --ring: 184 70% 50%;
+
+    --canvas: 210 22% 5%;
+    --surface-raised: 206 16% 13%;
+    --success: 151 53% 49%;
+    --warning: 40 92% 60%;
+    --info: 202 84% 62%;
+    --checker-a: 207 12% 18%;
+    --checker-b: 207 13% 13%;
+
+    --font-ui: "Segoe UI Variable", "Aptos", "Segoe UI", system-ui, sans-serif;
+    --font-display: "Bahnschrift", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+    --radius: 0.625rem;
   }
 }
 
@@ -42,17 +53,104 @@
   }
   body {
     @apply bg-background text-foreground;
+    min-width: 320px;
+    font-family: var(--font-ui);
+    background-image:
+      radial-gradient(circle at 12% -8%, hsl(var(--primary) / 0.09), transparent 31rem),
+      radial-gradient(circle at 92% 18%, hsl(var(--info) / 0.045), transparent 26rem);
+    background-attachment: fixed;
   }
+
+  ::selection {
+    color: hsl(var(--primary-foreground));
+    background: hsl(var(--primary) / 0.85);
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+.app-shell::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.2;
+  background-image: linear-gradient(hsl(var(--border) / 0.16) 1px, transparent 1px);
+  background-size: 100% 40px;
+  mask-image: linear-gradient(to bottom, black, transparent 58%);
 }
 
 /* Custom checkerboard pattern for transparency */
 .checkerboard {
   background-image:
-    linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
-    linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
-    linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
+    linear-gradient(45deg, hsl(var(--checker-a)) 25%, transparent 25%),
+    linear-gradient(-45deg, hsl(var(--checker-a)) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, hsl(var(--checker-a)) 75%),
+    linear-gradient(-45deg, transparent 75%, hsl(var(--checker-a)) 75%);
   background-size: 20px 20px;
   background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-  background-color: #1a1a1a;
+  background-color: hsl(var(--checker-b));
+}
+
+/* Two overlapping range inputs form the video in/out timeline. Only the
+   handles receive pointer events so either end remains easy to grab. */
+.timeline-range {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 3rem;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+}
+
+.timeline-range::-webkit-slider-runnable-track {
+  height: 1.5rem;
+  background: transparent;
+}
+
+.timeline-range::-webkit-slider-thumb {
+  pointer-events: auto;
+  width: 0.85rem;
+  height: 2.2rem;
+  margin-top: -0.35rem;
+  appearance: none;
+  cursor: ew-resize;
+  border: 2px solid hsl(var(--primary-foreground));
+  border-radius: 0.3rem;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.45), 0 5px 18px rgba(0, 0, 0, 0.45);
+}
+
+.timeline-range::-moz-range-track {
+  height: 1.5rem;
+  background: transparent;
+}
+
+.timeline-range::-moz-range-thumb {
+  pointer-events: auto;
+  width: 0.7rem;
+  height: 2rem;
+  cursor: ew-resize;
+  border: 2px solid hsl(var(--primary-foreground));
+  border-radius: 0.3rem;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.45), 0 5px 18px rgba(0, 0, 0, 0.45);
+}
+
+.timeline-range:focus-visible {
+  outline: 2px solid hsl(var(--primary) / 0.9);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
 }
