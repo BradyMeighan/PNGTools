@@ -2,7 +2,8 @@
 // bundle and are fetched only when a user starts an AI operation.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-let ortPromise: Promise<any> | null = null;
+let wasmOrtPromise: Promise<any> | null = null;
+let webGpuOrtPromise: Promise<any> | null = null;
 
 const MODEL_CACHE = 'quick-asset-ai-models-v1';
 
@@ -31,6 +32,7 @@ export type ProgressFn = (fraction: number, label: string) => void;
 
 export interface AiSession {
   session: any;
+  ort: any;
   backend: AiBackend;
 }
 
@@ -46,26 +48,62 @@ export function getPreferredAiBackend(): AiBackend {
   return supportsWebGpu() ? 'webgpu' : 'wasm';
 }
 
+function publicRuntimeUrl(file: string) {
+  const base = import.meta.env.BASE_URL || '/';
+  return `${base.endsWith('/') ? base : `${base}/`}ort/${file}`;
+}
+
+function configureOrt(ort: any, files: { mjs: string; wasm: string }) {
+  // Be explicit about both files. A string prefix makes ORT infer a runtime
+  // variant; the WebGPU bundle and the plain WASM bundle need different .mjs
+  // sidecars. Cloudflare serves these public files verbatim.
+  ort.env.wasm.wasmPaths = import.meta.env.DEV
+    ? 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/'
+    : {
+        mjs: publicRuntimeUrl(files.mjs),
+        wasm: publicRuntimeUrl(files.wasm),
+      };
+  // One thread works without COOP/COEP and avoids breaking integrations that
+  // rely on normal cross-origin windows.
+  ort.env.wasm.numThreads = 1;
+  ort.env.wasm.proxy = false;
+  return ort;
+}
+
+function clearRejectedRuntimePromise(kind: 'wasm' | 'webgpu', promise: Promise<any>) {
+  promise.catch(() => {
+    if (kind === 'wasm' && wasmOrtPromise === promise) wasmOrtPromise = null;
+    if (kind === 'webgpu' && webGpuOrtPromise === promise) webGpuOrtPromise = null;
+  });
+}
+
+// The regular ORT package is the reliable CPU baseline. Do not load the
+// WebGPU/JSEP bundle for browsers that cannot use a GPU: a failed JSEP init
+// poisons that module's WASM fallback for the rest of the page session.
 export async function getOrt(): Promise<any> {
-  if (!ortPromise) {
-    // The WebGPU build also contains the WASM execution provider, so one lazy
-    // runtime can serve both the fast path and the broad fallback.
-    ortPromise = import('onnxruntime-web/webgpu').then((mod) => {
-      const ort: any = mod;
-      // In production the runtime assets are self-hosted from /public/ort. The
-      // Vite dev server rewrites same-origin dynamic .mjs imports, so use the
-      // version-matched CDN copies while developing.
-      ort.env.wasm.wasmPaths = import.meta.env.DEV
-        ? 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/'
-        : '/ort/';
-      // One thread works without COOP/COEP and avoids breaking integrations
-      // that rely on normal cross-origin windows.
-      ort.env.wasm.numThreads = 1;
-      ort.env.wasm.proxy = false;
-      return ort;
-    });
+  if (!wasmOrtPromise) {
+    wasmOrtPromise = import('onnxruntime-web').then((mod) =>
+      configureOrt(mod as any, {
+        mjs: 'ort-wasm-simd-threaded.mjs',
+        wasm: 'ort-wasm-simd-threaded.wasm',
+      }),
+    );
+    clearRejectedRuntimePromise('wasm', wasmOrtPromise);
   }
-  return ortPromise;
+  return wasmOrtPromise;
+}
+
+async function getWebGpuOrt(): Promise<any> {
+  if (!webGpuOrtPromise) {
+    webGpuOrtPromise = import('onnxruntime-web/webgpu').then((mod) =>
+      configureOrt(mod as any, {
+        mjs: 'ort-wasm-simd-threaded.jsep.mjs',
+        wasm: 'ort-wasm-simd-threaded.jsep.wasm',
+      }),
+    );
+    clearRejectedRuntimePromise('webgpu', webGpuOrtPromise);
+  }
+  return webGpuOrtPromise;
 }
 
 async function readResponse(
@@ -172,10 +210,7 @@ export async function createAiSession(
   onProgress?: ModelProgressFn,
   signal?: AbortSignal,
 ): Promise<AiSession> {
-  const [ort, bytes] = await Promise.all([
-    getOrt(),
-    loadModelBytes(spec, onProgress, signal),
-  ]);
+  const bytesPromise = loadModelBytes(spec, onProgress, signal);
   if (signal?.aborted) throw abortError();
 
   const tryGpu = supportsWebGpu();
@@ -187,12 +222,13 @@ export async function createAiSession(
       backend: 'webgpu',
     });
     try {
+      const [ort, bytes] = await Promise.all([getWebGpuOrt(), bytesPromise]);
       const session = await ort.InferenceSession.create(bytes, {
         executionProviders: [{ name: 'webgpu', storageBufferCacheMode: 'simple' }, 'wasm'],
         graphOptimizationLevel: 'all',
       });
       onProgress?.({ phase: 'ready', fraction: 1, label: 'GPU model ready', backend: 'webgpu' });
-      return { session, backend: 'webgpu' };
+      return { session, ort, backend: 'webgpu' };
     } catch {
       onProgress?.({
         phase: 'fallback',
@@ -210,12 +246,13 @@ export async function createAiSession(
     label: tryGpu ? 'Initializing CPU fallback' : 'Initializing CPU engine',
     backend: 'wasm',
   });
+  const [ort, bytes] = await Promise.all([getOrt(), bytesPromise]);
   const session = await ort.InferenceSession.create(bytes, {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
   });
   onProgress?.({ phase: 'ready', fraction: 1, label: 'CPU model ready', backend: 'wasm' });
-  return { session, backend: 'wasm' };
+  return { session, ort, backend: 'wasm' };
 }
 
 // Kept for the existing background-removal path. It now uses the same lazy
