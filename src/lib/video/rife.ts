@@ -1,7 +1,6 @@
 import { type VideoSample } from 'mediabunny';
 import {
   createAiSession,
-  getOrt,
   type AiBackend,
   type AiSession,
   type ModelProgressFn,
@@ -151,7 +150,7 @@ export async function interpolateVideoSamples(
     input[5 * plane + i] = bPixels[i * 4 + 2] / 255;
   }
 
-  const ort = await getOrt();
+  const { ort } = prepared;
   const frames: HTMLCanvasElement[] = [];
   for (let index = 0; index < times.length; index++) {
     throwIfAborted(options.signal);

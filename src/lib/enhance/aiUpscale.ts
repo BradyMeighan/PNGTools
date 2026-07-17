@@ -1,6 +1,5 @@
 import {
   createAiSession,
-  getOrt,
   type AiBackend,
   type AiSession,
   type ModelLoadProgress,
@@ -88,8 +87,7 @@ export async function aiUpscale(
   onProgress?.(0.01, 'Preparing Real-ESRGAN…');
   const prepared = await prepareAiUpscaler(options.onModelProgress, options.signal);
   options.onBackend?.(prepared.backend);
-  const { session } = prepared;
-  const ort = await getOrt();
+  const { session, ort } = prepared;
   throwIfAborted(options.signal);
 
   const from = toCanvas(src);

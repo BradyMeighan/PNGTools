@@ -1,6 +1,5 @@
 import {
   createAiSession,
-  getOrt,
   type AiBackend,
   type AiSession,
   type ModelProgressFn,
@@ -75,7 +74,7 @@ export async function upscaleVideoFrame2x(
 ) {
   const prepared = await prepareVideoSuperResolution(undefined, options.signal);
   options.onBackend?.(prepared.backend);
-  const ort = await getOrt();
+  const { ort } = prepared;
   const width = source.width;
   const height = source.height;
   const sourcePixels = source.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height).data;
