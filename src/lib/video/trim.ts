@@ -16,9 +16,13 @@ import {
   StreamTarget,
   WEBM,
   WebMOutputFormat,
+  type AudioSample,
+  type ConversionAudioOptions,
+  type ConversionVideoOptions,
   type OutputFormat,
   type StreamTargetChunk,
   type Target,
+  type VideoSample,
 } from 'mediabunny';
 
 export type VideoContainer = 'mp4' | 'mov' | 'webm' | 'mkv';
@@ -53,9 +57,34 @@ interface SavePickerWindow extends Window {
 export interface TrimExportOptions {
   start: number;
   end: number;
+  segments?: TimeRange[];
+  output?: VideoOutputSettings;
   saveHandle: LocalSaveHandle | null;
   signal?: AbortSignal;
   onProgress?: (progress: number) => void;
+}
+
+export interface TimeRange {
+  start: number;
+  end: number;
+}
+
+export type ExportQuality = 'compact' | 'balanced' | 'high';
+
+export interface VideoOutputSettings {
+  container: VideoContainer;
+  maxDimension: number | null;
+  quality: ExportQuality;
+}
+
+export interface VideoOutputSpec {
+  container: VideoContainer;
+  containerLabel: string;
+  extension: VideoContainer;
+  mimeType: string;
+  width: number;
+  height: number;
+  videoBitrate: number;
 }
 
 export interface TrimExportResult {
@@ -106,6 +135,27 @@ function makeOutputFormat(container: VideoContainer, streaming: boolean): Output
   }
 }
 
+function getContainerOutputInfo(container: VideoContainer) {
+  switch (container) {
+    case 'mp4': return { containerLabel: 'MP4', extension: 'mp4' as const, mimeType: 'video/mp4' };
+    case 'mov': return { containerLabel: 'QuickTime', extension: 'mov' as const, mimeType: 'video/quicktime' };
+    case 'webm': return { containerLabel: 'WebM', extension: 'webm' as const, mimeType: 'video/webm' };
+    case 'mkv': return { containerLabel: 'Matroska', extension: 'mkv' as const, mimeType: 'video/x-matroska' };
+  }
+}
+
+export function getVideoOutputSpec(info: VideoInfo, settings: VideoOutputSettings): VideoOutputSpec {
+  const sourceMax = Math.max(info.width, info.height);
+  const targetMax = settings.maxDimension ? Math.min(sourceMax, settings.maxDimension) : sourceMax;
+  const scale = targetMax / sourceMax;
+  const width = Math.max(2, Math.round((info.width * scale) / 2) * 2);
+  const height = Math.max(2, Math.round((info.height * scale) / 2) * 2);
+  const pixels = width * height;
+  const qualityFactor = settings.quality === 'compact' ? 0.55 : settings.quality === 'high' ? 1.45 : 1;
+  const videoBitrate = Math.round(Math.max(800_000, Math.min(32_000_000, 5_000_000 * (pixels / (1920 * 1080)) * qualityFactor)));
+  return { container: settings.container, ...getContainerOutputInfo(settings.container), width, height, videoBitrate };
+}
+
 export function getTrimmedVideoName(fileName: string, extension: string) {
   const base = fileName.replace(/\.[^.]+$/, '') || 'video';
   return `${base}-trimmed.${extension}`;
@@ -115,7 +165,7 @@ export function supportsDirectFileSave() {
   return typeof (window as SavePickerWindow).showSaveFilePicker === 'function';
 }
 
-export async function requestVideoSaveHandle(info: VideoInfo, outputName: string) {
+export async function requestVideoSaveHandle(info: Pick<VideoInfo, 'containerLabel' | 'mimeType' | 'extension'>, outputName: string) {
   const picker = (window as SavePickerWindow).showSaveFilePicker;
   if (!picker) return null;
 
@@ -128,6 +178,63 @@ export async function requestVideoSaveHandle(info: VideoInfo, outputName: string
       },
     ],
   });
+}
+
+function normalizeSegments(options: TrimExportOptions, duration: number): TimeRange[] {
+  const ranges = options.segments?.length ? options.segments : [{ start: options.start, end: options.end }];
+  return ranges
+    .map((range) => ({
+      start: Math.max(0, Math.min(range.start, duration)),
+      end: Math.max(0, Math.min(range.end, duration)),
+    }))
+    .filter((range) => range.end - range.start >= MIN_CLIP_DURATION)
+    .sort((a, b) => a.start - b.start)
+    .reduce<TimeRange[]>((merged, range) => {
+      const previous = merged[merged.length - 1];
+      if (previous && range.start <= previous.end + 0.001) previous.end = Math.max(previous.end, range.end);
+      else merged.push({ ...range });
+      return merged;
+    }, []);
+}
+
+function locateSegment(timestamp: number, endTimestamp: number, segments: TimeRange[]) {
+  let outputOffset = 0;
+  for (const segment of segments) {
+    const overlapStart = Math.max(timestamp, segment.start);
+    const overlapEnd = Math.min(endTimestamp, segment.end);
+    if (overlapEnd > overlapStart) return { segment, outputOffset, overlapStart, overlapEnd };
+    outputOffset += segment.end - segment.start;
+  }
+  return null;
+}
+
+function processVideoSample(sample: VideoSample, segments: TimeRange[]) {
+  const match = locateSegment(sample.timestamp, sample.timestamp + sample.duration, segments);
+  if (!match) return null;
+  sample.setTimestamp(match.outputOffset + match.overlapStart - match.segment.start);
+  sample.setDuration(match.overlapEnd - match.overlapStart);
+  return sample;
+}
+
+function processAudioSample(sample: AudioSample, segments: TimeRange[]) {
+  const sampleEnd = sample.timestamp + sample.numberOfFrames / sample.sampleRate;
+  const output: AudioSample[] = [];
+  let outputOffset = 0;
+  for (const segment of segments) {
+    const overlapStart = Math.max(sample.timestamp, segment.start);
+    const overlapEnd = Math.min(sampleEnd, segment.end);
+    if (overlapEnd > overlapStart) {
+      const startFrame = Math.max(0, Math.round((overlapStart - sample.timestamp) * sample.sampleRate));
+      const endFrame = Math.min(sample.numberOfFrames, Math.round((overlapEnd - sample.timestamp) * sample.sampleRate));
+      if (endFrame > startFrame) {
+        const clipped = sample.trim(startFrame, endFrame);
+        clipped.setTimestamp(outputOffset + overlapStart - segment.start);
+        output.push(clipped);
+      }
+    }
+    outputOffset += segment.end - segment.start;
+  }
+  return output.length ? output : null;
 }
 
 export async function inspectVideo(file: File): Promise<VideoInfo> {
@@ -292,12 +399,24 @@ export async function exportTrimmedVideo(
   info: VideoInfo,
   options: TrimExportOptions,
 ): Promise<TrimExportResult> {
-  const start = Math.max(0, Math.min(options.start, info.duration - MIN_CLIP_DURATION));
-  const end = Math.min(info.duration, Math.max(options.end, start + MIN_CLIP_DURATION));
+  const segments = normalizeSegments(options, info.duration);
+  if (!segments.length) throw new Error('The edit removes the entire video. Keep at least one short section.');
+  const start = segments[0].start;
+  const end = segments[segments.length - 1].end;
   if (options.signal?.aborted) throw makeAbortError();
 
-  const keptRatio = Math.max(0, end - start) / info.duration;
-  const estimatedOutputBytes = Math.ceil(file.size * keptRatio);
+  const keptDuration = segments.reduce((total, segment) => total + segment.end - segment.start, 0);
+  const keptRatio = keptDuration / info.duration;
+  const outputSettings: VideoOutputSettings = options.output ?? { container: info.container, maxDimension: null, quality: 'balanced' };
+  const outputSpec = getVideoOutputSpec(info, outputSettings);
+  const resized = outputSpec.width !== info.width || outputSpec.height !== info.height;
+  const containerChanged = outputSpec.container !== info.container;
+  const qualityChanged = outputSettings.quality !== 'balanced';
+  const hasInternalCuts = segments.length > 1;
+  const losslessEndCut = !hasInternalCuts && start <= 0.001 && !resized && !containerChanged && !qualityChanged;
+  const estimatedOutputBytes = losslessEndCut
+    ? Math.ceil(file.size * keptRatio)
+    : Math.ceil(keptDuration * (outputSpec.videoBitrate + (info.audioCodec ? 160_000 : 0)) / 8);
   const shouldStream = Boolean(options.saveHandle && estimatedOutputBytes >= STREAM_TO_DISK_THRESHOLD);
 
   if (!options.saveHandle && estimatedOutputBytes > MAX_BUFFER_FALLBACK) {
@@ -327,19 +446,48 @@ export async function exportTrimmedVideo(
     });
 
     const output = new Output({
-      format: makeOutputFormat(info.container, shouldStream),
+      format: makeOutputFormat(outputSpec.container, shouldStream),
       target,
     });
 
-    if (start <= 0.001) {
+    if (losslessEndCut) {
       await executeLosslessEndTrim(input, output, end, options.signal, options.onProgress);
     } else {
+      // Conversion normalizes samples so the trimmed start becomes timestamp 0
+      // before calling custom processors. Express every kept segment in that
+      // same local timeline before dropping gaps and joining the remainder.
+      const processingSegments = segments.map((segment) => ({
+        start: segment.start - start,
+        end: segment.end - start,
+      }));
+      const videoCodec = outputSpec.container === 'mp4' || outputSpec.container === 'mov' ? 'avc' : 'vp9';
+      const audioCodec = outputSpec.container === 'mp4' || outputSpec.container === 'mov' ? 'aac' : 'opus';
+      const videoOptions: ConversionVideoOptions = {
+        codec: videoCodec,
+        bitrate: outputSpec.videoBitrate,
+        hardwareAcceleration: 'no-preference',
+        forceTranscode: true,
+        keyFrameInterval: 2,
+        ...(resized
+          ? info.width >= info.height
+            ? { width: outputSpec.width }
+            : { height: outputSpec.height }
+          : {}),
+        ...(hasInternalCuts ? { process: (sample) => processVideoSample(sample, processingSegments) } : {}),
+      };
+      const audioOptions: ConversionAudioOptions = {
+        codec: audioCodec,
+        bitrate: outputSettings.quality === 'compact' ? 96_000 : outputSettings.quality === 'high' ? 192_000 : 144_000,
+        forceTranscode: true,
+        ...(hasInternalCuts ? { process: (sample) => processAudioSample(sample, processingSegments) } : {}),
+      };
       const conversion = await Conversion.init({
         input,
         output,
         tracks: 'primary',
         trim: { start, end },
-        video: { hardwareAcceleration: 'no-preference' },
+        video: videoOptions,
+        audio: audioOptions,
         showWarnings: false,
       });
 
@@ -350,7 +498,7 @@ export async function exportTrimmedVideo(
         const reasons = discardedEssentials.map(({ reason }) => reason.replaceAll('_', ' '));
         const detail = reasons.length > 0 ? ` (${[...new Set(reasons)].join(', ')})` : '';
         throw new Error(
-          `This browser cannot export this exact slice${detail}. For a lossless end trim, leave “Keep from” at 0:00.`,
+          `This browser cannot render this edit${detail}. Try WebM output, a smaller resolution, or current Chrome/Edge.`,
         );
       }
 
@@ -368,7 +516,7 @@ export async function exportTrimmedVideo(
       }
     }
 
-    const outputName = getTrimmedVideoName(file.name, info.extension);
+    const outputName = getTrimmedVideoName(file.name, outputSpec.extension);
 
     if (bufferTarget) {
       const buffer = bufferTarget.buffer;
@@ -381,7 +529,7 @@ export async function exportTrimmedVideo(
         await writer.write({ type: 'write', data: new Uint8Array(buffer), position: 0 });
         await writer.close();
       } else {
-        triggerDownload(new Blob([buffer], { type: info.mimeType }), outputName);
+      triggerDownload(new Blob([buffer], { type: outputSpec.mimeType }), outputName);
       }
     }
 

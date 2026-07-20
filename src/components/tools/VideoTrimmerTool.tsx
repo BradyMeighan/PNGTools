@@ -7,12 +7,14 @@ import {
   Gauge,
   HardDriveDownload,
   Loader2,
+  Plus,
   Pause,
   Play,
   RotateCcw,
   Scissors,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -20,14 +22,26 @@ import { cn, formatSize } from '../../lib/utils';
 import {
   exportTrimmedVideo,
   getTrimmedVideoName,
+  getVideoOutputSpec,
   inspectVideo,
   requestVideoSaveHandle,
   supportsDirectFileSave,
   type VideoInfo,
+  type ExportQuality,
+  type TimeRange,
+  type VideoContainer,
 } from '../../lib/video/trim';
 
 const MIN_CLIP_DURATION = 0.05;
 const QUICK_END_CUTS = [1, 3, 5, 10];
+const RESOLUTION_PRESETS = [
+  { label: 'Source resolution', value: null },
+  { label: '4K / 2160p', value: 3840 },
+  { label: '1440p', value: 2560 },
+  { label: '1080p', value: 1920 },
+  { label: '720p', value: 1280 },
+  { label: '480p', value: 854 },
+] as const;
 
 type ToolStatus = 'idle' | 'analyzing' | 'exporting' | 'saved';
 
@@ -48,6 +62,27 @@ function isAbortError(error: unknown) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong while working with this video.';
+}
+
+function getKeptSegments(start: number, end: number, cuts: TimeRange[]): TimeRange[] {
+  const mergedCuts = cuts
+    .map((cut) => ({ start: Math.max(start, cut.start), end: Math.min(end, cut.end) }))
+    .filter((cut) => cut.end - cut.start >= MIN_CLIP_DURATION)
+    .sort((a, b) => a.start - b.start)
+    .reduce<TimeRange[]>((merged, cut) => {
+      const previous = merged[merged.length - 1];
+      if (previous && cut.start <= previous.end + 0.001) previous.end = Math.max(previous.end, cut.end);
+      else merged.push({ ...cut });
+      return merged;
+    }, []);
+  const segments: TimeRange[] = [];
+  let cursor = start;
+  for (const cut of mergedCuts) {
+    if (cut.start - cursor >= MIN_CLIP_DURATION) segments.push({ start: cursor, end: cut.start });
+    cursor = Math.max(cursor, cut.end);
+  }
+  if (end - cursor >= MIN_CLIP_DURATION) segments.push({ start: cursor, end });
+  return segments;
 }
 
 function VideoDropzone({ onFile }: { onFile: (file: File) => void }) {
@@ -156,6 +191,12 @@ export function VideoTrimmerTool() {
   const [info, setInfo] = useState<VideoInfo | null>(null);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
+  const [cuts, setCuts] = useState<TimeRange[]>([]);
+  const [cutStart, setCutStart] = useState(0);
+  const [cutEnd, setCutEnd] = useState(0);
+  const [outputContainer, setOutputContainer] = useState<VideoContainer>('mp4');
+  const [maxDimension, setMaxDimension] = useState<number | null>(null);
+  const [quality, setQuality] = useState<ExportQuality>('balanced');
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [previewError, setPreviewError] = useState(false);
@@ -191,6 +232,12 @@ export function VideoTrimmerTool() {
         setInfo(nextInfo);
         setStart(0);
         setEnd(nextInfo.duration);
+        setCuts([]);
+        setCutStart(Math.min(nextInfo.duration * 0.4, Math.max(0, nextInfo.duration - MIN_CLIP_DURATION)));
+        setCutEnd(Math.min(nextInfo.duration * 0.6, nextInfo.duration));
+        setOutputContainer(nextInfo.container);
+        setMaxDimension(null);
+        setQuality('balanced');
         setPlayhead(0);
         setStatus('idle');
       })
@@ -226,6 +273,9 @@ export function VideoTrimmerTool() {
     setInfo(null);
     setStart(0);
     setEnd(0);
+    setCuts([]);
+    setCutStart(0);
+    setCutEnd(0);
     setPlayhead(0);
     setStatus('idle');
     setProgress(0);
@@ -262,6 +312,27 @@ export function VideoTrimmerTool() {
     [info, jumpTo, start],
   );
 
+  const addCut = useCallback(() => {
+    if (!info) return;
+    const nextStart = Math.max(start, Math.min(cutStart, end - MIN_CLIP_DURATION));
+    const nextEnd = Math.min(end, Math.max(cutEnd, nextStart + MIN_CLIP_DURATION));
+    const nextCuts = [...cuts, { start: nextStart, end: nextEnd }]
+      .sort((a, b) => a.start - b.start)
+      .reduce<TimeRange[]>((merged, cut) => {
+        const previous = merged[merged.length - 1];
+        if (previous && cut.start <= previous.end + 0.001) previous.end = Math.max(previous.end, cut.end);
+        else merged.push({ ...cut });
+        return merged;
+      }, []);
+    if (!getKeptSegments(start, end, nextCuts).length) {
+      setError('That cut would remove the entire video. Leave at least one short section.');
+      return;
+    }
+    setCuts(nextCuts);
+    setError(null);
+    setSuccess(null);
+  }, [cutEnd, cutStart, cuts, end, info, start]);
+
   const previewSelection = useCallback(async () => {
     const video = videoRef.current;
     if (!video) return;
@@ -271,8 +342,10 @@ export function VideoTrimmerTool() {
       return;
     }
 
-    if (video.currentTime < start || video.currentTime >= end - 0.03) {
-      video.currentTime = start;
+    const segments = getKeptSegments(start, end, cuts);
+    if (!segments.length) return;
+    if (video.currentTime < start || video.currentTime >= end - 0.03 || cuts.some((cut) => video.currentTime >= cut.start && video.currentTime < cut.end)) {
+      video.currentTime = segments[0].start;
     }
 
     try {
@@ -280,16 +353,19 @@ export function VideoTrimmerTool() {
     } catch {
       // The native video element will expose playback errors in its own controls.
     }
-  }, [end, start]);
+  }, [cuts, end, start]);
 
   const handleExport = useCallback(async () => {
     if (!file || !info || status === 'exporting') return;
 
-    const outputName = getTrimmedVideoName(file.name, info.extension);
+    const outputSettings = { container: outputContainer, maxDimension, quality };
+    const outputSpec = getVideoOutputSpec(info, outputSettings);
+    const outputName = getTrimmedVideoName(file.name, outputSpec.extension);
+    const segments = getKeptSegments(start, end, cuts);
 
     try {
       // Ask for the destination immediately while the click still counts as a user gesture.
-      const saveHandle = await requestVideoSaveHandle(info, outputName);
+      const saveHandle = await requestVideoSaveHandle(outputSpec, outputName);
       const controller = new AbortController();
       exportControllerRef.current = controller;
       setStatus('exporting');
@@ -300,6 +376,8 @@ export function VideoTrimmerTool() {
       const result = await exportTrimmedVideo(file, info, {
         start,
         end,
+        segments,
+        output: outputSettings,
         saveHandle,
         signal: controller.signal,
         onProgress: setProgress,
@@ -320,25 +398,14 @@ export function VideoTrimmerTool() {
     } finally {
       exportControllerRef.current = null;
     }
-  }, [end, file, info, start, status]);
+  }, [cuts, end, file, info, maxDimension, outputContainer, quality, start, status]);
 
   const cancelExport = useCallback(() => {
     exportControllerRef.current?.abort();
   }, []);
 
-  const keepDuration = Math.max(0, end - start);
-  const removedFromEnd = info ? Math.max(0, info.duration - end) : 0;
-  const estimatedSize = info && file ? Math.round(file.size * (keepDuration / info.duration)) : 0;
-  const isFastEndCut = start <= 0.001;
-
-  const timelineStyle = useMemo(() => {
-    if (!info) return { left: '0%', right: '0%' };
-    return {
-      left: `${(start / info.duration) * 100}%`,
-      right: `${100 - (end / info.duration) * 100}%`,
-    };
-  }, [end, info, start]);
-
+  const keptSegments = useMemo(() => getKeptSegments(start, end, cuts), [cuts, end, start]);
+  const keepDuration = keptSegments.reduce((total, segment) => total + segment.end - segment.start, 0);
   const playheadPosition = info ? Math.min(100, Math.max(0, (playhead / info.duration) * 100)) : 0;
 
   if (!file || !info) {
@@ -349,10 +416,10 @@ export function VideoTrimmerTool() {
             <Scissors className="h-3.5 w-3.5" /> Local video cutter
           </div>
           <h2 id="video-trimmer-title" className="text-4xl font-bold tracking-[-0.04em] text-white sm:text-5xl">
-            Lose the ending. Keep the quality.
+            Cut, join, resize, and export.
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Cut a few seconds—or pull out a clean slice—without creating a project, uploading the file, or waiting on a server.
+            Trim the ends, remove sections from the middle, and render a smaller MP4 or WebM without uploading the file.
           </p>
         </div>
 
@@ -378,7 +445,7 @@ export function VideoTrimmerTool() {
           {[
             { icon: Gauge, label: 'End trims skip rendering', detail: 'Near file-copy speed' },
             { icon: ShieldCheck, label: 'Nothing gets uploaded', detail: 'Private by design' },
-            { icon: Sparkles, label: 'No quality loss', detail: 'Original packets preserved' },
+            { icon: Sparkles, label: 'Full local renderer', detail: 'Cuts, joins, and resizing' },
           ].map(({ icon: Icon, label, detail }) => (
             <div key={label} className="rounded-xl border border-border bg-card p-4">
               <Icon className="mb-3 h-4 w-4 text-primary" />
@@ -391,6 +458,15 @@ export function VideoTrimmerTool() {
     );
   }
 
+  const removedDuration = Math.max(0, info.duration - keepDuration);
+  const outputSettings = { container: outputContainer, maxDimension, quality };
+  const outputSpec = getVideoOutputSpec(info, outputSettings);
+  const isFastEndCut = start <= 0.001 && cuts.length === 0 && outputContainer === info.container && maxDimension === null && quality === 'balanced';
+  const estimatedSize = isFastEndCut
+    ? Math.round(file.size * (keepDuration / info.duration))
+    : Math.round(keepDuration * (outputSpec.videoBitrate + (info.audioCodec ? 144_000 : 0)) / 8);
+  const availableContainers = [...new Set<VideoContainer>([info.container, 'mp4', 'webm'])];
+
   return (
     <section className="mx-auto max-w-7xl" aria-labelledby="video-workspace-title" aria-busy={status === 'exporting'}>
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -399,7 +475,7 @@ export function VideoTrimmerTool() {
             <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_rgba(42,190,198,.9)]" />
             Local editing bay
           </div>
-          <h2 id="video-workspace-title" className="text-3xl font-bold tracking-tight text-white">Trim video</h2>
+          <h2 id="video-workspace-title" className="text-3xl font-bold tracking-tight text-white">Edit video</h2>
           <p className="mt-1 max-w-2xl truncate text-sm text-muted-foreground" title={file.name}>{file.name}</p>
         </div>
         <button
@@ -431,6 +507,11 @@ export function VideoTrimmerTool() {
                   onTimeUpdate={(event) => {
                     const video = event.currentTarget;
                     setPlayhead(video.currentTime);
+                    const activeCut = cuts.find((cut) => video.currentTime >= cut.start && video.currentTime < cut.end);
+                    if (!video.paused && activeCut) {
+                      video.currentTime = activeCut.end;
+                      return;
+                    }
                     if (!video.paused && video.currentTime >= end - 0.015) {
                       video.pause();
                       video.currentTime = end;
@@ -485,7 +566,20 @@ export function VideoTrimmerTool() {
                       'repeating-linear-gradient(90deg, rgba(255,255,255,.08) 0, rgba(255,255,255,.08) 1px, transparent 1px, transparent 8%)',
                   }}
                 >
-                  <div className="absolute inset-y-0 bg-primary/80 shadow-[0_0_24px_rgba(42,190,198,.3)]" style={timelineStyle} />
+                  {keptSegments.map((segment) => (
+                    <div
+                      key={`${segment.start}-${segment.end}`}
+                      className="absolute inset-y-0 bg-primary/80 shadow-[0_0_24px_rgba(42,190,198,.3)]"
+                      style={{ left: `${(segment.start / info.duration) * 100}%`, width: `${((segment.end - segment.start) / info.duration) * 100}%` }}
+                    />
+                  ))}
+                  {cuts.map((cut) => (
+                    <div
+                      key={`cut-${cut.start}-${cut.end}`}
+                      className="absolute inset-y-0 bg-red-400/35"
+                      style={{ left: `${(cut.start / info.duration) * 100}%`, width: `${((cut.end - cut.start) / info.duration) * 100}%` }}
+                    />
+                  ))}
                   <div
                     className="absolute inset-y-0 w-px bg-white shadow-[0_0_8px_rgba(255,255,255,.7)]"
                     style={{ left: `${playheadPosition}%` }}
@@ -539,6 +633,7 @@ export function VideoTrimmerTool() {
                   onClick={() => {
                     setStart(0);
                     setEnd(info.duration);
+                    setCuts([]);
                     jumpTo(0);
                     setSuccess(null);
                   }}
@@ -550,6 +645,36 @@ export function VideoTrimmerTool() {
                 </button>
               </div>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-red-400/15 bg-card p-4 sm:p-5">
+            <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-300">Remove a section</p>
+                <p className="mt-1 text-xs text-muted-foreground">Add as many middle cuts as you need. The remaining pieces are joined on export.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setCutStart(playhead); setCutEnd(Math.min(end, playhead + Math.max(1, info.duration * 0.05))); }}
+                className="mt-2 text-left text-xs text-primary sm:mt-0"
+              >
+                Start at playhead
+              </button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <TimeInput label="Cut from" value={cutStart} max={Math.max(start, end - MIN_CLIP_DURATION)} onChange={(value) => setCutStart(Math.max(start, Math.min(value, cutEnd - MIN_CLIP_DURATION)))} />
+              <TimeInput label="Cut until" value={cutEnd} max={end} onChange={(value) => setCutEnd(Math.min(end, Math.max(value, cutStart + MIN_CLIP_DURATION)))} />
+              <button type="button" onClick={addCut} className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-400/15 px-4 py-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-400/25"><Plus className="h-4 w-4" /> Add cut</button>
+            </div>
+            {cuts.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {cuts.map((cut, index) => (
+                  <button key={`${cut.start}-${cut.end}`} type="button" onClick={() => setCuts((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="inline-flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-400/[0.07] px-3 py-2 font-mono text-xs text-red-200 transition hover:bg-red-400/15" title="Remove this cut">
+                    {formatTime(cut.start)} → {formatTime(cut.end)} <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -569,6 +694,7 @@ export function VideoTrimmerTool() {
                     const nextEnd = Math.max(MIN_CLIP_DURATION, info.duration - seconds);
                     setStart(0);
                     setEnd(nextEnd);
+                    setCuts([]);
                     jumpTo(Math.max(0, nextEnd - 0.03));
                     setSuccess(null);
                   }}
@@ -581,16 +707,48 @@ export function VideoTrimmerTool() {
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-5">
+            <div className="mb-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Export settings</p>
+              <p className="mt-1 text-xs text-muted-foreground">Source values are preselected. Choose a smaller preset to downscale.</p>
+            </div>
+            <div className="space-y-3">
+              <label className="block space-y-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Format</span>
+                <select value={outputContainer} onChange={(event) => setOutputContainer(event.target.value as VideoContainer)} className="w-full rounded-lg border border-border bg-canvas px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary/50">
+                  {availableContainers.map((container) => <option key={container} value={container}>{container === 'webm' ? 'WebM' : container.toUpperCase()}{container === info.container ? ' (source)' : ''}</option>)}
+                </select>
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resolution</span>
+                <select value={maxDimension ?? 'source'} onChange={(event) => setMaxDimension(event.target.value === 'source' ? null : Number(event.target.value))} className="w-full rounded-lg border border-border bg-canvas px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary/50">
+                  {RESOLUTION_PRESETS.map((preset) => <option key={preset.label} value={preset.value ?? 'source'}>{preset.value === null ? `${preset.label} (${info.width}×${info.height})` : preset.label}</option>)}
+                </select>
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Quality</span>
+                <select value={quality} onChange={(event) => setQuality(event.target.value as ExportQuality)} className="w-full rounded-lg border border-border bg-canvas px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary/50">
+                  <option value="compact">Compact · smallest file</option>
+                  <option value="balanced">Balanced · recommended</option>
+                  <option value="high">High · more detail</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-4 rounded-lg bg-canvas px-3 py-2.5 text-xs text-muted-foreground">
+              Output: <span className="font-mono text-foreground">{outputSpec.width}×{outputSpec.height} {outputSpec.container.toUpperCase()}</span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-start gap-3">
               <div className={cn('rounded-lg p-2', isFastEndCut ? 'bg-emerald-400/10 text-emerald-300' : 'bg-sky-400/10 text-sky-300')}>
                 {isFastEndCut ? <Gauge className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
               </div>
               <div>
-                <p className="text-sm font-semibold text-white">{isFastEndCut ? 'Lossless fast cut' : 'Frame-precise slice'}</p>
+                <p className="text-sm font-semibold text-white">{isFastEndCut ? 'Lossless fast cut' : 'Local video render'}</p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {isFastEndCut
                     ? 'Copies the original video and audio packets. No render and no quality loss.'
-                    : 'A non-zero start needs re-encoding. It stays local and uses hardware acceleration when the browser provides it.'}
+                    : `${cuts.length ? 'Middle cuts are joined' : 'The selected range is rendered'} at ${outputSpec.width}×${outputSpec.height} using browser hardware acceleration when available.`}
                 </p>
               </div>
             </div>
@@ -604,7 +762,7 @@ export function VideoTrimmerTool() {
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Removing</p>
-                <p className="mt-1 font-mono text-sm text-white">{formatTime(start + removedFromEnd)}</p>
+                <p className="mt-1 font-mono text-sm text-white">{formatTime(removedDuration)}</p>
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Est. size</p>
@@ -612,7 +770,7 @@ export function VideoTrimmerTool() {
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Format</p>
-                <p className="mt-1 font-mono text-sm text-white">{info.containerLabel}</p>
+                <p className="mt-1 font-mono text-sm text-white">{outputSpec.containerLabel}</p>
               </div>
             </div>
             <div className="mt-4 border-t border-border pt-4 text-xs text-muted-foreground">
@@ -655,7 +813,7 @@ export function VideoTrimmerTool() {
               className="group flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3.5 font-semibold text-primary-foreground shadow-[0_14px_40px_rgba(42,190,198,.15)] transition hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-[0_18px_50px_rgba(42,190,198,.23)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {supportsDirectFileSave() ? <HardDriveDownload className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-              Save trimmed video
+              {isFastEndCut ? 'Save trimmed video' : 'Render & save video'}
             </button>
           )}
 

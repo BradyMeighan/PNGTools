@@ -18,10 +18,16 @@ a server.
 - **Enhancer** — Upscale and sharpen. "High quality" uses Lanczos resampling
   (instant, reliable); "AI" uses Real-ESRGAN x4 (tiled, best for small images).
 - **Favicon** — Generate a full favicon set plus `site.webmanifest` from one image.
-- **Video trim** — Remove the end of MP4, MOV, WebM, or MKV videos with a lossless
-  packet copy, or extract a frame-precise slice with browser-native hardware
-  acceleration when available. Large files can stream directly to disk in
-  browsers that support the File System Access API.
+- **Favicon downloader** — Inspect a public website for declared, manifest,
+  Apple touch, and conventional favicon assets, then download individual files
+  or a complete zip.
+- **Meta checker** — Audit title, description, canonical, robots, viewport, Open
+  Graph, and X/Twitter tags with search and social-card previews.
+- **Video editor** — Trim the ends or remove multiple sections from the middle
+  of MP4, MOV, WebM, or MKV videos. Export locally as MP4 or WebM with source,
+  4K, 1440p, 1080p, 720p, or 480p sizing. Simple end trims remain lossless;
+  joins, format changes, and downscaling use browser-native hardware acceleration
+  when available. Large files can stream directly to disk in supported browsers.
 - **AI video / FPS Boost** — Use RIFE to create real in-between frames at 2x or
   4x FPS, with scene-cut protection and full or balanced motion analysis.
 - **AI video / AI Upscale** — Use AMD SESR for native learned 2x

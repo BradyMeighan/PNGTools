@@ -5,7 +5,9 @@ import {
   FileType,
   Gauge,
   Image,
+  ImageDown,
   Minimize2,
+  ScanSearch,
   Scissors,
   Wand2,
   type LucideIcon,
@@ -19,6 +21,8 @@ export type ToolType =
   | 'conversion'
   | 'enhancer'
   | 'favicon'
+  | 'favicon-download'
+  | 'meta-check'
   | 'video-trim'
   | 'video-enhance';
 
@@ -31,7 +35,7 @@ interface ToolDefinition {
   id: ToolType;
   label: string;
   icon: LucideIcon;
-  group: 'Image' | 'Output' | 'Video';
+  group: 'Image' | 'Output' | 'Web' | 'Video';
   badge?: string;
 }
 
@@ -42,7 +46,9 @@ const TOOLS: ToolDefinition[] = [
   { id: 'compression', label: 'Compress', icon: Minimize2, group: 'Output' },
   { id: 'conversion', label: 'Convert', icon: FileType, group: 'Output' },
   { id: 'favicon', label: 'Favicon', icon: Image, group: 'Output' },
-  { id: 'video-trim', label: 'Quick trim', icon: Scissors, group: 'Video' },
+  { id: 'favicon-download', label: 'Grab favicon', icon: ImageDown, group: 'Web', badge: 'New' },
+  { id: 'meta-check', label: 'Meta checker', icon: ScanSearch, group: 'Web', badge: 'New' },
+  { id: 'video-trim', label: 'Video editor', icon: Scissors, group: 'Video' },
   { id: 'video-enhance', label: 'AI video', icon: Gauge, group: 'Video', badge: 'New' },
 ];
 

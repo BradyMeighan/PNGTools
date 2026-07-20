@@ -23,6 +23,12 @@ const EnhancerTool = lazy(() =>
 const FaviconGeneratorTool = lazy(() =>
   import('./components/tools/FaviconGeneratorTool').then((m) => ({ default: m.FaviconGeneratorTool })),
 );
+const FaviconDownloaderTool = lazy(() =>
+  import('./components/tools/FaviconDownloaderTool').then((m) => ({ default: m.FaviconDownloaderTool })),
+);
+const MetaTagCheckerTool = lazy(() =>
+  import('./components/tools/MetaTagCheckerTool').then((m) => ({ default: m.MetaTagCheckerTool })),
+);
 const VideoTrimmerTool = lazy(() =>
   import('./components/tools/VideoTrimmerTool').then((m) => ({ default: m.VideoTrimmerTool })),
 );
@@ -62,6 +68,8 @@ function App() {
             {activeTool === 'conversion' && <ConversionTool />}
             {activeTool === 'enhancer' && <EnhancerTool />}
             {activeTool === 'favicon' && <FaviconGeneratorTool />}
+            {activeTool === 'favicon-download' && <FaviconDownloaderTool />}
+            {activeTool === 'meta-check' && <MetaTagCheckerTool />}
             {activeTool === 'video-trim' && <VideoTrimmerTool />}
             {activeTool === 'video-enhance' && <VideoEnhancerTool />}
           </Suspense>
