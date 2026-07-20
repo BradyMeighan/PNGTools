@@ -29,19 +29,51 @@ function saveBlob(blob: Blob, name: string) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
 }
 
+async function canDisplayIcon(url: string) {
+  return new Promise<boolean>((resolve) => {
+    const image = new Image();
+    const timer = window.setTimeout(() => finish(false), 8_000);
+    const finish = (available: boolean) => {
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      resolve(available);
+    };
+    image.referrerPolicy = 'no-referrer';
+    image.onload = () => finish(image.naturalWidth > 0 && image.naturalHeight > 0);
+    image.onerror = () => finish(false);
+    image.src = url;
+  });
+}
+
+async function ensureImageBlob(blob: Blob) {
+  const header = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+  const text = new TextDecoder().decode(header).trimStart().toLowerCase();
+  const imageSignature =
+    (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47) ||
+    (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) ||
+    (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46) ||
+    (header[0] === 0x00 && header[1] === 0x00 && header[2] === 0x01 && header[3] === 0x00) ||
+    (text.startsWith('<svg') || text.startsWith('<?xml')) ||
+    (text.startsWith('riff') && text.includes('webp'));
+  if (blob.type.includes('html') || !imageSignature) throw new Error('The website returned an HTML error page instead of an image file.');
+  return blob;
+}
+
 export function FaviconDownloaderTool() {
   const [url, setUrl] = useState('');
   const [metadata, setMetadata] = useState<SiteMetadata | null>(null);
   const [icons, setIcons] = useState<IconCandidate[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [broken, setBroken] = useState<Set<number>>(new Set());
+  const [blockedUrls, setBlockedUrls] = useState<Set<string>>(new Set());
+  const [discoveredCount, setDiscoveredCount] = useState(0);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState('');
 
   const usableSelected = useMemo(
-    () => [...selected].filter((index) => !broken.has(index)),
-    [broken, selected],
+    () => [...selected].filter((index) => !blockedUrls.has(icons[index]?.url)),
+    [blockedUrls, icons, selected],
   );
 
   const scan = async () => {
@@ -49,13 +81,17 @@ export function FaviconDownloaderTool() {
     setError(null);
     setMetadata(null);
     setIcons([]);
-    setBroken(new Set());
+    setBlockedUrls(new Set());
+    setDiscoveredCount(0);
     try {
       const nextMetadata = await inspectSite(url);
       const nextIcons = await discoverSiteIcons(nextMetadata);
+      const displayable = await Promise.all(nextIcons.map(async (icon) => ({ icon, available: await canDisplayIcon(icon.url) })));
+      const usableIcons = displayable.filter(({ available }) => available).map(({ icon }) => icon);
       setMetadata(nextMetadata);
-      setIcons(nextIcons);
-      setSelected(new Set(nextIcons.map((_, index) => index)));
+      setDiscoveredCount(nextIcons.length);
+      setIcons(usableIcons);
+      setSelected(new Set(usableIcons.map((_, index) => index)));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Could not inspect that website.');
     } finally {
@@ -66,7 +102,7 @@ export function FaviconDownloaderTool() {
   const downloadOne = async (icon: IconCandidate, index: number) => {
     setError(null);
     try {
-      saveBlob(await downloadPublicAsset(icon.url), iconFileName(icon, index));
+      saveBlob(await ensureImageBlob(await downloadPublicAsset(icon.url)), iconFileName(icon, index));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Could not download that icon.');
     }
@@ -82,7 +118,7 @@ export function FaviconDownloaderTool() {
       for (const index of usableSelected) {
         setProgress(`Fetching ${downloaded + 1} of ${usableSelected.length}…`);
         try {
-          zip.file(`${String(index + 1).padStart(2, '0')}-${iconFileName(icons[index], index)}`, await downloadPublicAsset(icons[index].url));
+          zip.file(`${String(index + 1).padStart(2, '0')}-${iconFileName(icons[index], index)}`, await ensureImageBlob(await downloadPublicAsset(icons[index].url)));
           downloaded++;
         } catch {
           // Skip dead declarations while preserving the rest of the set.
@@ -133,7 +169,7 @@ export function FaviconDownloaderTool() {
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="font-semibold text-white">{new URL(metadata.url).hostname}</p>
-              <p className="text-xs text-muted-foreground">Found {icons.length} candidates · {metadata.route === 'relay' ? 'read through browser-safe relay' : 'read directly'}</p>
+              <p className="text-xs text-muted-foreground">{icons.length} verified image{icons.length === 1 ? '' : 's'} shown{discoveredCount > icons.length ? ` · ${discoveredCount - icons.length} blocked or unavailable` : ''} · {metadata.route === 'relay' ? 'page read through relay' : 'page read directly'}</p>
             </div>
             <button onClick={() => void downloadSelected()} disabled={!usableSelected.length || status !== 'idle'} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-40">
               {status === 'downloading' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageOpen className="h-4 w-4" />}
@@ -143,13 +179,13 @@ export function FaviconDownloaderTool() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {icons.map((icon, index) => {
-              const unavailable = broken.has(index);
+              const unavailable = blockedUrls.has(icon.url);
               const checked = selected.has(index) && !unavailable;
               return (
-                <article key={icon.url} className={cn('group rounded-2xl border bg-card p-4 transition', checked ? 'border-primary/35' : 'border-border', unavailable && 'opacity-45')}>
+                <article key={icon.url} className={cn('group rounded-2xl border bg-card p-4 transition', checked ? 'border-primary/35' : 'border-border', unavailable && 'hidden')}>
                   <div className="flex items-start gap-4">
                     <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[linear-gradient(45deg,#181d25_25%,transparent_25%),linear-gradient(-45deg,#181d25_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#181d25_75%),linear-gradient(-45deg,transparent_75%,#181d25_75%)] bg-[length:12px_12px] bg-[position:0_0,0_6px,6px_-6px,-6px_0px]">
-                      <img src={icon.url} alt="" className="max-h-12 max-w-12 object-contain" onError={() => setBroken((current) => new Set(current).add(index))} />
+                      <img src={icon.url} alt="" referrerPolicy="no-referrer" className="max-h-12 max-w-12 object-contain" onError={() => setBlockedUrls((current) => new Set(current).add(icon.url))} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -165,7 +201,14 @@ export function FaviconDownloaderTool() {
             })}
           </div>
 
-          <p className="mt-5 flex items-center justify-center gap-2 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Public page data only; no login or private browser data is accessed.</p>
+          {!icons.length && (
+            <div className="rounded-2xl border border-border bg-card p-8 text-center">
+              <p className="font-semibold text-foreground">This site did not expose a browser-loadable favicon.</p>
+              <p className="mt-2 text-sm text-muted-foreground">Its host may block hotlinking or automated requests. Try the site’s direct favicon URL, or use a server-side fetcher for protected domains.</p>
+            </div>
+          )}
+
+          <p className="mt-5 flex items-center justify-center gap-2 text-xs text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5" /> Only verified image responses are offered for download; HTML error pages are rejected.</p>
         </div>
       )}
     </section>

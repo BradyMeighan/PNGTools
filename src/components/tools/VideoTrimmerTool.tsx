@@ -7,7 +7,6 @@ import {
   Gauge,
   HardDriveDownload,
   Loader2,
-  Plus,
   Pause,
   Play,
   RotateCcw,
@@ -192,8 +191,7 @@ export function VideoTrimmerTool() {
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
   const [cuts, setCuts] = useState<TimeRange[]>([]);
-  const [cutStart, setCutStart] = useState(0);
-  const [cutEnd, setCutEnd] = useState(0);
+  const [cutDraftStart, setCutDraftStart] = useState<number | null>(null);
   const [outputContainer, setOutputContainer] = useState<VideoContainer>('mp4');
   const [maxDimension, setMaxDimension] = useState<number | null>(null);
   const [quality, setQuality] = useState<ExportQuality>('balanced');
@@ -233,8 +231,7 @@ export function VideoTrimmerTool() {
         setStart(0);
         setEnd(nextInfo.duration);
         setCuts([]);
-        setCutStart(Math.min(nextInfo.duration * 0.4, Math.max(0, nextInfo.duration - MIN_CLIP_DURATION)));
-        setCutEnd(Math.min(nextInfo.duration * 0.6, nextInfo.duration));
+        setCutDraftStart(null);
         setOutputContainer(nextInfo.container);
         setMaxDimension(null);
         setQuality('balanced');
@@ -274,8 +271,7 @@ export function VideoTrimmerTool() {
     setStart(0);
     setEnd(0);
     setCuts([]);
-    setCutStart(0);
-    setCutEnd(0);
+    setCutDraftStart(null);
     setPlayhead(0);
     setStatus('idle');
     setProgress(0);
@@ -312,10 +308,10 @@ export function VideoTrimmerTool() {
     [info, jumpTo, start],
   );
 
-  const addCut = useCallback(() => {
+  const addCut = useCallback((from: number, to: number) => {
     if (!info) return;
-    const nextStart = Math.max(start, Math.min(cutStart, end - MIN_CLIP_DURATION));
-    const nextEnd = Math.min(end, Math.max(cutEnd, nextStart + MIN_CLIP_DURATION));
+    const nextStart = Math.max(start, Math.min(from, end - MIN_CLIP_DURATION));
+    const nextEnd = Math.min(end, Math.max(to, nextStart + MIN_CLIP_DURATION));
     const nextCuts = [...cuts, { start: nextStart, end: nextEnd }]
       .sort((a, b) => a.start - b.start)
       .reduce<TimeRange[]>((merged, cut) => {
@@ -329,9 +325,23 @@ export function VideoTrimmerTool() {
       return;
     }
     setCuts(nextCuts);
+    setCutDraftStart(null);
     setError(null);
     setSuccess(null);
-  }, [cutEnd, cutStart, cuts, end, info, start]);
+  }, [cuts, end, info, start]);
+
+  const removeThroughPlayhead = useCallback(() => {
+    if (cutDraftStart === null) {
+      setCutDraftStart(playhead);
+      setError(null);
+      return;
+    }
+    if (Math.abs(playhead - cutDraftStart) < MIN_CLIP_DURATION) {
+      setError('Move the playhead a little farther to create a cut.');
+      return;
+    }
+    addCut(Math.min(cutDraftStart, playhead), Math.max(cutDraftStart, playhead));
+  }, [addCut, cutDraftStart, playhead]);
 
   const previewSelection = useCallback(async () => {
     const video = videoRef.current;
@@ -344,9 +354,10 @@ export function VideoTrimmerTool() {
 
     const segments = getKeptSegments(start, end, cuts);
     if (!segments.length) return;
-    if (video.currentTime < start || video.currentTime >= end - 0.03 || cuts.some((cut) => video.currentTime >= cut.start && video.currentTime < cut.end)) {
-      video.currentTime = segments[0].start;
-    }
+    const current = video.currentTime;
+    const activeSegment = segments.find((segment) => current >= segment.start && current < segment.end - 0.015);
+    const nextSegment = segments.find((segment) => segment.start > current);
+    video.currentTime = activeSegment ? current : (nextSegment?.start ?? segments[0].start);
 
     try {
       await video.play();
@@ -543,7 +554,7 @@ export function VideoTrimmerTool() {
                     className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-                    Preview cut
+                    {isPlaying ? 'Pause preview' : 'Play from playhead'}
                   </button>
                   <button
                     type="button"
@@ -615,56 +626,25 @@ export function VideoTrimmerTool() {
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-              <div className="grid flex-1 grid-cols-2 gap-3">
-                <TimeInput label="Keep from" value={start} max={Math.max(0, end - MIN_CLIP_DURATION)} onChange={updateStart} />
-                <TimeInput label="Keep until" value={end} max={info.duration} onChange={updateEnd} />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => updateStart(playhead)}
-                  className="flex-1 whitespace-nowrap rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground sm:flex-none"
-                >
-                  Start at playhead
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStart(0);
-                    setEnd(info.duration);
-                    setCuts([]);
-                    jumpTo(0);
-                    setSuccess(null);
-                  }}
-                  className="rounded-lg border border-border p-2.5 text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
-                  aria-label="Reset trim range"
-                  title="Reset trim range"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                </button>
-              </div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Trim the ends</p>
+            <p className="mt-1 text-xs text-muted-foreground">Scrub with the native player, then set the beginning or end from the current playhead.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" onClick={() => updateStart(playhead)} className="rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground">Set start to playhead</button>
+              <button type="button" onClick={() => updateEnd(playhead)} className="rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground">Set end to playhead</button>
+              <button type="button" onClick={() => { setStart(0); setEnd(info.duration); setCuts([]); setCutDraftStart(null); jumpTo(0); setSuccess(null); }} className="rounded-lg border border-border p-2.5 text-muted-foreground transition hover:border-primary/40 hover:text-foreground" aria-label="Reset trim range" title="Reset trim range"><RotateCcw className="h-4 w-4" /></button>
             </div>
+            <details className="mt-4 border-t border-border pt-3">
+              <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">Precise time inputs</summary>
+              <div className="mt-3 grid grid-cols-2 gap-3"><TimeInput label="Keep from" value={start} max={Math.max(0, end - MIN_CLIP_DURATION)} onChange={updateStart} /><TimeInput label="Keep until" value={end} max={info.duration} onChange={updateEnd} /></div>
+            </details>
           </div>
 
           <div className="rounded-2xl border border-red-400/15 bg-card p-4 sm:p-5">
-            <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-300">Remove a section</p>
-                <p className="mt-1 text-xs text-muted-foreground">Add as many middle cuts as you need. The remaining pieces are joined on export.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setCutStart(playhead); setCutEnd(Math.min(end, playhead + Math.max(1, info.duration * 0.05))); }}
-                className="mt-2 text-left text-xs text-primary sm:mt-0"
-              >
-                Start at playhead
-              </button>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-              <TimeInput label="Cut from" value={cutStart} max={Math.max(start, end - MIN_CLIP_DURATION)} onChange={(value) => setCutStart(Math.max(start, Math.min(value, cutEnd - MIN_CLIP_DURATION)))} />
-              <TimeInput label="Cut until" value={cutEnd} max={end} onChange={(value) => setCutEnd(Math.min(end, Math.max(value, cutStart + MIN_CLIP_DURATION)))} />
-              <button type="button" onClick={addCut} className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-400/15 px-4 py-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-400/25"><Plus className="h-4 w-4" /> Add cut</button>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-300">Remove a section</p>
+            <p className="mt-1 text-xs text-muted-foreground">Put the playhead at the first frame to remove, mark it, then move the playhead to the last frame and remove through it.</p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={removeThroughPlayhead} className="inline-flex items-center gap-2 rounded-lg bg-red-400/15 px-4 py-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-400/25"><Scissors className="h-4 w-4" /> {cutDraftStart === null ? 'Mark cut start' : 'Remove through playhead'}</button>
+              {cutDraftStart !== null && <><span className="font-mono text-xs text-red-200">Start: {formatTime(cutDraftStart)}</span><button type="button" onClick={() => setCutDraftStart(null)} className="text-xs text-muted-foreground hover:text-foreground">Cancel mark</button></>}
             </div>
             {cuts.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
