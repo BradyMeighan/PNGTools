@@ -95,12 +95,15 @@ function collectPrefixedMeta(document: Document, attribute: 'property' | 'name',
 
 function parseIcons(document: Document, baseUrl: string): IconCandidate[] {
   return [...document.querySelectorAll<HTMLLinkElement>('link[rel]')]
-    .filter((link) => /(^|\s)(icon|apple-touch-icon|mask-icon)(\s|$)/i.test(link.rel))
+    .filter((link) => /(^|\s)(icon|apple-touch-icon|mask-icon)(\s|$)/i.test(link.getAttribute('rel') ?? ''))
     .map((link) => ({
-      url: absoluteUrl(link.href || link.getAttribute('href'), baseUrl),
-      rel: link.rel,
-      sizes: link.sizes?.value || link.getAttribute('sizes'),
-      type: link.type || null,
+      // DOMParser does not load the inspected page, so its .href property can
+      // inherit PNGTools' document URL. Always resolve the literal declaration
+      // against the inspected site's own URL instead.
+      url: absoluteUrl(link.getAttribute('href'), baseUrl),
+      rel: link.getAttribute('rel') ?? '',
+      sizes: link.getAttribute('sizes'),
+      type: link.getAttribute('type'),
       source: 'html' as const,
     }))
     .filter((icon) => Boolean(icon.url));
@@ -109,6 +112,7 @@ function parseIcons(document: Document, baseUrl: string): IconCandidate[] {
 export function analyzeSiteHtml(html: string, baseUrl: string, route: FetchRoute = 'pasted'): SiteMetadata {
   const url = normalizeSiteUrl(baseUrl);
   const document = new DOMParser().parseFromString(html, 'text/html');
+  const documentBase = absoluteUrl(document.querySelector('base[href]')?.getAttribute('href'), url) || url;
   const og = {
     ...collectPrefixedMeta(document, 'name', 'og:'),
     ...collectPrefixedMeta(document, 'property', 'og:'),
@@ -125,16 +129,16 @@ export function analyzeSiteHtml(html: string, baseUrl: string, route: FetchRoute
     url,
     title: document.title.trim() || metaValue(document, 'meta[property="og:title"]'),
     description: metaValue(document, 'meta[name="description"]'),
-    canonical: absoluteUrl(document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href, url),
+    canonical: absoluteUrl(document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.getAttribute('href'), documentBase),
     robots: metaValue(document, 'meta[name="robots"]'),
     viewport: metaValue(document, 'meta[name="viewport"]'),
     charset: document.querySelector<HTMLMetaElement>('meta[charset]')?.getAttribute('charset')?.trim() || metaValue(document, 'meta[http-equiv="content-type"]'),
     themeColor: metaValue(document, 'meta[name="theme-color"]'),
     language: document.documentElement.lang.trim(),
-    manifestUrl: absoluteUrl(document.querySelector<HTMLLinkElement>('link[rel="manifest"]')?.href, url),
+    manifestUrl: absoluteUrl(document.querySelector<HTMLLinkElement>('link[rel="manifest"]')?.getAttribute('href'), documentBase),
     og,
     twitter,
-    icons: parseIcons(document, url),
+    icons: parseIcons(document, documentBase),
     route,
   };
 }
