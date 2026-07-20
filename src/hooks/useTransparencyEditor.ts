@@ -15,6 +15,7 @@ import {
   type RenderSettings,
   type RGB,
   type DistanceMetric,
+  type SelectionShape,
 } from '../lib/transparency/types';
 import type { ImagePoint } from '../components/ZoomPanCanvas';
 
@@ -25,7 +26,7 @@ const nextId = () => `op_${++opCounter}`;
 export type Action = 'erase' | 'restore';
 
 export interface ToolSettings {
-  tool: 'wand' | 'brush';
+  tool: 'wand' | 'brush' | 'rectangle' | 'ellipse' | 'lasso';
   action: Action;
   color: RGB;
   tolerance: number; // 0..1
@@ -33,6 +34,13 @@ export interface ToolSettings {
   contiguous: boolean;
   brushSize: number; // px in image space
   brushHardness: number; // 0..1
+}
+
+export interface SelectionDraft {
+  kind: 'shape' | 'lasso';
+  shape?: SelectionShape;
+  points: ImagePoint[];
+  action: Action;
 }
 
 const DEFAULT_TOOL: ToolSettings = {
@@ -50,6 +58,7 @@ export function useTransparencyEditor() {
   const stateRef = useRef<TransparencyState | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const liveStroke = useRef<RemovalOp | null>(null);
+  const liveSelection = useRef<SelectionDraft | null>(null);
   const rafRef = useRef<number | null>(null);
 
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
@@ -61,6 +70,7 @@ export function useTransparencyEditor() {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiProgress, setAiProgress] = useState<{ p: number; label: string } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(null);
 
   const settingsRef = useRef(settings);
   const metricRef = useRef<DistanceMetric>(settings.metric);
@@ -269,6 +279,67 @@ export function useTransparencyEditor() {
     }
   }, []);
 
+  const beginSelection = useCallback((pt: ImagePoint, action: Action) => {
+    const selectedTool = toolRef.current.tool;
+    if (selectedTool !== 'rectangle' && selectedTool !== 'ellipse' && selectedTool !== 'lasso') return;
+    const draft: SelectionDraft =
+      selectedTool === 'lasso'
+        ? { kind: 'lasso', points: [pt], action }
+        : { kind: 'shape', shape: selectedTool, points: [pt, pt], action };
+    liveSelection.current = draft;
+    setSelectionDraft(draft);
+  }, []);
+
+  const extendSelection = useCallback((pt: ImagePoint) => {
+    const draft = liveSelection.current;
+    if (!draft) return;
+    if (draft.kind === 'shape') {
+      draft.points[1] = pt;
+    } else {
+      const previous = draft.points[draft.points.length - 1];
+      if (Math.hypot(pt.x - previous.x, pt.y - previous.y) < 1.5) return;
+      draft.points.push(pt);
+    }
+    setSelectionDraft({ ...draft, points: [...draft.points] });
+  }, []);
+
+  const endSelection = useCallback(
+    (pt: ImagePoint) => {
+      const draft = liveSelection.current;
+      if (!draft) return;
+      if (draft.kind === 'shape') draft.points[1] = pt;
+      else draft.points.push(pt);
+      liveSelection.current = null;
+      setSelectionDraft(null);
+
+      const mode = draft.action === 'restore' ? 'subtract' : 'add';
+      if (draft.kind === 'shape') {
+        const [start, end] = draft.points;
+        if (Math.abs(end.x - start.x) < 0.5 || Math.abs(end.y - start.y) < 0.5) return;
+        commitOp({
+          id: nextId(),
+          kind: 'shape',
+          mode,
+          tolerance: 0,
+          softness: 0,
+          shape: draft.shape,
+          start,
+          end,
+        });
+      } else if (draft.points.length >= 3) {
+        commitOp({
+          id: nextId(),
+          kind: 'lasso',
+          mode,
+          tolerance: 0,
+          softness: 0,
+          polygon: draft.points,
+        });
+      }
+    },
+    [commitOp],
+  );
+
   const pushAiMask = useCallback(
     (mask: Uint8Array) => {
       commitOp({ id: nextId(), kind: 'ai', mode: 'new', tolerance: 0, softness: 0, aiMask: mask });
@@ -315,6 +386,8 @@ export function useTransparencyEditor() {
 
   // Clear all edits and show the original image again.
   const reset = useCallback(() => {
+    liveSelection.current = null;
+    setSelectionDraft(null);
     setOps([]);
     setRedoStack([]);
   }, []);
@@ -322,6 +395,8 @@ export function useTransparencyEditor() {
   // Throw away the current image entirely and return to the uploader.
   const clearImage = useCallback(() => {
     stateRef.current = null;
+    liveSelection.current = null;
+    setSelectionDraft(null);
     opCounter = 0;
     setOps([]);
     setRedoStack([]);
@@ -370,6 +445,10 @@ export function useTransparencyEditor() {
     beginStroke,
     extendStroke,
     endStroke,
+    selectionDraft,
+    beginSelection,
+    extendSelection,
+    endSelection,
     pushAiMask,
     autoRemove,
     runAiCutout,

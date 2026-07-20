@@ -6,7 +6,9 @@ import type { RGB, DistanceMetric } from './color';
 //  - 'subtract' : restore / paint opacity back (remove from the transparent area)
 export type SelectionMode = 'new' | 'add' | 'subtract';
 
-export type OpKind = 'global' | 'flood' | 'brush' | 'ai';
+export type OpKind = 'global' | 'flood' | 'brush' | 'shape' | 'lasso' | 'ai';
+
+export type SelectionShape = 'rectangle' | 'ellipse';
 
 export interface BrushPoint {
   x: number;
@@ -31,6 +33,11 @@ export interface RemovalOp {
   stroke?: BrushPoint[];
   radius?: number; // px in image space
   hardness?: number; // 0..1, higher = harder edge
+  // Geometric selections (dragged shapes and freehand lasso).
+  shape?: SelectionShape;
+  start?: BrushPoint;
+  end?: BrushPoint;
+  polygon?: BrushPoint[];
   // AI cutout.
   aiMask?: Uint8Array; // per-pixel removal strength 0..255 (255 = background)
 }

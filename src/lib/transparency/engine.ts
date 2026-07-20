@@ -116,6 +116,71 @@ function stampStroke(
   }
 }
 
+function pointInPolygon(x: number, y: number, points: BrushPoint[]): boolean {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const a = points[i];
+    const b = points[j];
+    const crosses = (a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+// Rasterize vector-like selections with four coverage samples per pixel. This
+// keeps shape and lasso edges smooth while remaining deterministic for undo.
+function applyGeometricSelection(state: TransparencyState, op: RemovalOp, restore: boolean): void {
+  const points = op.kind === 'lasso' ? op.polygon : op.start && op.end ? [op.start, op.end] : undefined;
+  if (!points || points.length < 2 || (op.kind === 'lasso' && points.length < 3)) return;
+
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const left = Math.min(...xs);
+  const right = Math.max(...xs);
+  const top = Math.min(...ys);
+  const bottom = Math.max(...ys);
+  if (right - left < 0.5 || bottom - top < 0.5) return;
+
+  const minX = Math.max(0, Math.floor(left));
+  const maxX = Math.min(state.width - 1, Math.ceil(right));
+  const minY = Math.max(0, Math.floor(top));
+  const maxY = Math.min(state.height - 1, Math.ceil(bottom));
+  const rx = (right - left) / 2;
+  const ry = (bottom - top) / 2;
+  const cx = left + rx;
+  const cy = top + ry;
+  const samples = [0.25, 0.75];
+
+  const contains = (x: number, y: number) => {
+    if (op.kind === 'lasso') return pointInPolygon(x, y, points);
+    if (op.shape === 'ellipse') {
+      const dx = (x - cx) / rx;
+      const dy = (y - cy) / ry;
+      return dx * dx + dy * dy <= 1;
+    }
+    return x >= left && x <= right && y >= top && y <= bottom;
+  };
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      let hits = 0;
+      for (const oy of samples) {
+        for (const ox of samples) if (contains(x + ox, y + oy)) hits++;
+      }
+      if (!hits) continue;
+      const i = y * state.width + x;
+      const p = i * 4;
+      combine(
+        state,
+        i,
+        hits / 4,
+        { r: state.src[p], g: state.src[p + 1], b: state.src[p + 2] },
+        restore,
+      );
+    }
+  }
+}
+
 // Apply one op onto the current mask state (mutating it).
 export function applyOp(state: TransparencyState, op: RemovalOp, metric: DistanceMetric): void {
   if (op.mode === 'new') resetMask(state);
@@ -153,6 +218,8 @@ export function applyOp(state: TransparencyState, op: RemovalOp, metric: Distanc
     }
   } else if (op.kind === 'brush' && op.stroke) {
     stampStroke(state, op.stroke, op.radius ?? 20, op.hardness ?? 0.6, restore);
+  } else if (op.kind === 'shape' || op.kind === 'lasso') {
+    applyGeometricSelection(state, op, restore);
   } else if (op.kind === 'ai' && op.aiMask) {
     const mask = op.aiMask;
     for (let i = 0; i < n; i++) {

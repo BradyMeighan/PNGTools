@@ -14,11 +14,18 @@ import {
   Sparkles,
   Layers,
   X,
+  SquareDashed,
+  CircleDashed,
+  LassoSelect,
 } from 'lucide-react';
 import { ImageUploader } from '../ImageUploader';
 import { ZoomPanCanvas, type ImagePoint, type ZoomPanHandle } from '../ZoomPanCanvas';
 import { Tooltip, InfoTip } from '../Tooltip';
-import { useTransparencyEditor, type Action } from '../../hooks/useTransparencyEditor';
+import {
+  useTransparencyEditor,
+  type Action,
+  type SelectionDraft,
+} from '../../hooks/useTransparencyEditor';
 import { rgbToHex, hexToRgb } from '../../lib/transparency/color';
 import type { DistanceMetric } from '../../lib/transparency/types';
 
@@ -99,6 +106,37 @@ function Toggle({
   );
 }
 
+function SelectionPreview({ draft }: { draft: SelectionDraft }) {
+  const color = draft.action === 'restore' ? '#22c55e' : 'hsl(var(--primary))';
+  const fill = draft.action === 'restore' ? 'rgb(34 197 94 / 0.16)' : 'hsl(var(--primary) / 0.16)';
+  const shared = {
+    stroke: color,
+    fill,
+    strokeWidth: 2,
+    strokeDasharray: '7 5',
+    vectorEffect: 'non-scaling-stroke' as const,
+  };
+
+  if (draft.kind === 'shape') {
+    const [start, end] = draft.points;
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    if (draft.shape === 'ellipse') {
+      return <ellipse cx={x + width / 2} cy={y + height / 2} rx={width / 2} ry={height / 2} {...shared} />;
+    }
+    return <rect x={x} y={y} width={width} height={height} {...shared} />;
+  }
+
+  const points = draft.points.map((point) => `${point.x},${point.y}`).join(' ');
+  return draft.points.length > 2 ? (
+    <polygon points={points} {...shared} />
+  ) : (
+    <polyline points={points} {...shared} fill="none" />
+  );
+}
+
 export function TransparencyTool() {
   const ed = useTransparencyEditor();
   const zoomRef = useRef<ZoomPanHandle>(null);
@@ -114,17 +152,24 @@ export function TransparencyTool() {
     if (ed.tool.tool === 'brush') {
       drawing.current = true;
       ed.beginStroke(pt, actionFor(e));
-    } else {
+    } else if (ed.tool.tool === 'wand') {
       ed.wandAt(pt, actionFor(e));
+    } else {
+      drawing.current = true;
+      ed.beginSelection(pt, actionFor(e));
     }
   };
   const onMove = (pt: ImagePoint) => {
     if (ed.tool.tool === 'brush' && drawing.current) ed.extendStroke(pt);
+    else if (drawing.current) ed.extendSelection(pt);
   };
-  const onUp = () => {
+  const onUp = (pt: ImagePoint) => {
     if (ed.tool.tool === 'brush' && drawing.current) {
       drawing.current = false;
       ed.endStroke();
+    } else if (ed.tool.tool !== 'wand' && drawing.current) {
+      drawing.current = false;
+      ed.endSelection(pt);
     }
   };
 
@@ -247,10 +292,13 @@ export function TransparencyTool() {
 
         {/* How to apply */}
         <div className="space-y-2">
-          <span className="text-xs font-medium text-muted-foreground">How?</span>
+          <span className="text-xs font-medium text-muted-foreground">Method</span>
           <div className="grid grid-cols-2 gap-2">
             {segBtn(tool.tool === 'wand', () => ed.setTool({ tool: 'wand' }), MousePointerClick, 'Click color', 'Click once to affect a whole area of similar color. Best for solid backgrounds.')}
             {segBtn(tool.tool === 'brush', () => ed.setTool({ tool: 'brush' }), Paintbrush, 'Paint', 'Drag to paint by hand. Best for fine touch-ups.')}
+            {segBtn(tool.tool === 'rectangle', () => ed.setTool({ tool: 'rectangle' }), SquareDashed, 'Rectangle', 'Drag a rectangular block to erase or restore everything inside it.')}
+            {segBtn(tool.tool === 'ellipse', () => ed.setTool({ tool: 'ellipse' }), CircleDashed, 'Ellipse', 'Drag an oval or circular area to erase or restore everything inside it.')}
+            {segBtn(tool.tool === 'lasso', () => ed.setTool({ tool: 'lasso' }), LassoSelect, 'Lasso', 'Draw freely around an area. Release to erase or restore everything enclosed.')}
           </div>
         </div>
 
@@ -294,7 +342,7 @@ export function TransparencyTool() {
               <span className="text-xs text-muted-foreground font-mono">{rgbToHex(tool.color)}</span>
             </div>
           </Section>
-        ) : (
+        ) : tool.tool === 'brush' ? (
           <Section title={<><Paintbrush className="w-4 h-4 text-primary" /> Brush settings</>}>
             <Slider
               label="Size"
@@ -315,6 +363,16 @@ export function TransparencyTool() {
               info="Higher gives a crisp edge, lower gives a feathered, soft-edged brush."
               onChange={(v) => ed.setTool({ brushHardness: v })}
             />
+          </Section>
+        ) : (
+          <Section title={<><LassoSelect className="w-4 h-4 text-primary" /> Selection tool</>}>
+            <div className="rounded-lg border bg-secondary/20 p-3 text-xs text-muted-foreground leading-relaxed">
+              {tool.tool === 'lasso'
+                ? 'Draw around any part of the image and release to close the selection.'
+                : `Drag across the image to place an ${tool.tool}. Release to apply it.`}
+              {' '}The tinted area will be {tool.action === 'erase' ? 'made transparent' : 'restored'}.
+            </div>
+            <p className="text-[11px] text-muted-foreground">Hold Alt while drawing to temporarily switch between erase and restore.</p>
           </Section>
         )}
 
@@ -395,6 +453,17 @@ export function TransparencyTool() {
               className="absolute top-0 left-0"
               style={{ width: ed.imageSize.w, height: ed.imageSize.h }}
             />
+            {ed.selectionDraft && (
+              <svg
+                aria-hidden="true"
+                className="absolute inset-0 pointer-events-none overflow-visible"
+                width={ed.imageSize.w}
+                height={ed.imageSize.h}
+                viewBox={`0 0 ${ed.imageSize.w} ${ed.imageSize.h}`}
+              >
+                <SelectionPreview draft={ed.selectionDraft} />
+              </svg>
+            )}
           </ZoomPanCanvas>
 
           {/* Clear / start over with a new image */}
@@ -410,7 +479,7 @@ export function TransparencyTool() {
             <div className="absolute top-3 left-3 max-w-md flex items-start gap-3 bg-card/95 backdrop-blur border rounded-lg px-4 py-3 shadow-lg">
               <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
               <p className="text-sm text-muted-foreground leading-snug flex-1">
-                Click the background to erase it, or hit{' '}
+                Click a color, paint, or draw a shape to erase it—or hit{' '}
                 <span className="text-foreground font-medium">Auto-remove background</span>. Use{' '}
                 <span className="text-foreground font-medium">Restore</span> to bring parts back, and{' '}
                 <kbd className="px-1 rounded bg-secondary text-xs">Ctrl+Z</kbd> to undo.
